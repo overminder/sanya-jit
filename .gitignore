@@ -1,0 +1,3 @@
+.*.swp
+src/**/target
+src/**/Cargo.lock
