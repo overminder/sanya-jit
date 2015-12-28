@@ -23,7 +23,13 @@ impl<'a> JitMem<'a> {
     }
 
     pub unsafe fn call_ptr_ptr(&self, arg: isize) -> isize {
-        let as_fn: fn(isize) -> isize = transmute(self.inner_slice.as_ptr());
+        let as_fn: extern "C" fn(isize) -> isize = transmute(self.inner_slice.as_ptr());
         as_fn(arg)
+    }
+
+    pub unsafe fn call_ptr6_ptr(&self, arg1: isize, arg2: isize, arg3: isize,
+                                arg4: isize, arg5: isize, arg6: isize) -> isize {
+        let as_fn: extern "C" fn(isize, isize, isize, isize, isize, isize) -> isize = transmute(self.inner_slice.as_ptr());
+        as_fn(arg1, arg2, arg3, arg4, arg5, arg6)
     }
 }
