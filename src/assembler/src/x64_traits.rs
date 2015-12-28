@@ -1,30 +1,25 @@
-use std::io::{self, Write};
+/// Basically a way to do multi-dispatch on different kinds of operands.
 
-/// Basically a way to overload instruction methods.
+pub struct Emit(pub Vec<u8>);
 
-pub struct Emit<A: Write>(A);
-
-pub fn emit<A: Write>(a: A) -> Emit<A> {
-    Emit(a)
-}
-
-impl<A: Write> Write for Emit<A> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
+impl Emit {
+    pub fn write_byte(&mut self, b: u8) {
+        self.0.push(b)
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
+    pub fn write_bytes(&mut self, bs: &[u8]) {
+        // A simple loop suits well for instruction sequences (bs.len() < 8).
+        for b in bs {
+            self.0.push(*b);
+        }
     }
-}
 
-impl<A: Write> Emit<A> {
-    pub fn into_inner(self) -> A {
+    pub fn take(self) -> Vec<u8> {
         self.0
     }
 
-    pub fn inner_mut(&mut self) -> &mut A {
-        &mut self.0
+    pub fn inner_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -33,7 +28,7 @@ pub trait EmitPush<Op> {
 }
 
 // `impl<'a, T, Given: Trait<T>> Trait<&'a T> for Given` works.
-// 
+//
 // `impl<'a, T, Given: Trait<&'a T>> Trait<T> for Given` doesn't work
 // currently - even in GHC it will only work under UndecidableInstances,
 // since the instance constraint (Trait<&'a T>) is larger than the
