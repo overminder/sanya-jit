@@ -56,3 +56,7 @@ pub trait EmitArith<Dst, Src> {
     fn sub(&mut self, dst: Dst, src: Src) -> &mut Self;
     fn cmp(&mut self, dst: Dst, src: Src) -> &mut Self;
 }
+
+pub trait EmitMov<Dst, Src> {
+    fn mov(&mut self, dst: Dst, src: Src) -> &mut Self;
+}
