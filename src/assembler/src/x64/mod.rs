@@ -3,15 +3,13 @@ mod tests;
 
 use self::traits::*;
 
-use byteorder::{ByteOrder, NativeEndian};
-
 /// Mostly from dart/runtime/vm/assembler_x64.cc
 /// And http://wiki.osdev.org/X86-64_Instruction_Encoding
 /// And http://www.felixcloutier.com/x86
 /// And pypy/rpython/jit/backend/x86/rx86.py
 #[repr(u8)]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
-pub enum Reg {
+pub enum R64 {
     RAX = 0,
     RCX = 1,
     RDX = 2,
@@ -32,7 +30,7 @@ pub enum Reg {
     R15 = 15,
 }
 
-impl Reg {
+impl R64 {
     pub fn lower_part(self) -> u8 {
         (self as u8) & 0x7
     }
@@ -51,22 +49,52 @@ enum Mod {
     Direct = 3,
 }
 
+#[derive(Copy, Clone)]
+enum RegOrOpExt {
+    R(R64),
+    O(u8),
+}
+
+impl RegOrOpExt {
+    fn lower_part(&self) -> u8 {
+        match self {
+            &RegOrOpExt::R(r) => r.lower_part(),
+            &RegOrOpExt::O(o) => o,
+        }
+    }
+
+    fn is_extended_reg(&self) -> bool {
+        match self {
+            &RegOrOpExt::R(r) => r.is_extended(),
+            &RegOrOpExt::O(o) => false,
+        }
+    }
+}
+
 struct ModRM {
     mod_: Mod,
-    reg: Reg,
-    rm: Reg,
+    reg: RegOrOpExt,
+    rm: R64,
 }
 
 impl ModRM {
-    fn direct(reg: Reg, rm: Reg) -> Self {
+    fn direct(reg: R64, rm: R64) -> Self {
         ModRM {
             mod_: Mod::Direct,
-            reg: reg,
+            reg: RegOrOpExt::R(reg),
             rm: rm,
         }
     }
 
-    fn encoding(self) -> u8 {
+    fn direct_opext(opext: u8, rm: R64) -> Self {
+        ModRM {
+            mod_: Mod::Direct,
+            reg: RegOrOpExt::O(opext),
+            rm: rm,
+        }
+    }
+
+    fn encoding(&self) -> u8 {
         ((self.mod_ as u8) << 6) | (self.reg.lower_part() << 3) | self.rm.lower_part()
     }
 }
@@ -106,7 +134,7 @@ impl REX {
     }
 
     fn with_modrm(mut self, modrm: &ModRM) -> Self {
-        if modrm.reg.is_extended() {
+        if modrm.reg.is_extended_reg() {
             self = self.or(REX::r());
         }
         if modrm.rm.is_extended() {
@@ -114,9 +142,16 @@ impl REX {
         }
         self
     }
+
+    fn with_modrm_rm(mut self, rm: R64) -> Self {
+        if rm.is_extended() {
+            self = self.or(REX::b());
+        }
+        self
+    }
 }
 
-fn emit_reg_rex(buf: &mut Emit, r: Reg, mut rex: REX) {
+fn emit_reg_rex(buf: &mut Emit, r: R64, mut rex: REX) {
     if r.is_extended() {
         rex = rex.or(REX::b())
     }
@@ -126,82 +161,96 @@ fn emit_reg_rex(buf: &mut Emit, r: Reg, mut rex: REX) {
     }
 }
 
-#[derive(Copy, Clone)]
-pub enum Imm64 {
-    I32(i32),
-    I64(i64),
-}
-
-impl EmitPush<Reg> for Emit {
-    fn push(&mut self, op: Reg) -> &mut Self {
+impl EmitPush<R64> for Emit {
+    fn push(&mut self, op: R64) -> &mut Self {
         emit_reg_rex(self, op, REX::none());
         self.write_byte(0x50 | op.lower_part());
         self
     }
 }
 
-impl EmitPush<Imm64> for Emit {
-    fn push(&mut self, op: Imm64) -> &mut Self {
-        match op {
-            Imm64::I32(i) => {
-                let mut encoding = [0x68, 0, 0, 0, 0];
-                NativeEndian::write_i32(&mut encoding[1..], i);
-                self.write_bytes(&encoding);
-            }
-            Imm64::I64(_) => {
-                panic!("XXX: push(Imm64)");
-            }
-        }
+impl EmitPush<i32> for Emit {
+    fn push(&mut self, op: i32) -> &mut Self {
+        self.write_byte(0x68);
+        self.write_i32(op);
         self
     }
 }
 
-impl EmitPop<Reg> for Emit {
-    fn pop(&mut self, op: Reg) -> &mut Self {
+impl EmitPop<R64> for Emit {
+    fn pop(&mut self, op: R64) -> &mut Self {
         emit_reg_rex(self, op, REX::none());
         self.write_byte(0x58 | op.lower_part());
         self
     }
 }
 
-fn arith_reg_reg(buf: &mut Emit, opcode: u8, dst: Reg, src: Reg) {
+fn emit_rm64dst_r64src(buf: &mut Emit, opcode: u8, dst: R64, src: R64) {
     let modrm = ModRM::direct(src, dst);
     let rex = REX::w().with_modrm(&modrm);
     buf.write_bytes(&[rex.encoding(), opcode, modrm.encoding()]);
 }
 
-impl EmitArith<Reg, Reg> for Emit {
-    fn add(&mut self, dst: Reg, src: Reg) -> &mut Self {
-        arith_reg_reg(self, 0x01 /* r/m64 += r64 */, dst, src);
+// 81 /$opext id
+fn emit_arith_rm64_i32(buf: &mut Emit, opext: u8, dst: R64, src: i32) {
+    assert!(opext < 8);
+    let modrm = ModRM::direct_opext(opext, dst);
+    let rex = REX::w().with_modrm(&modrm);
+    buf.write_bytes(&[rex.encoding(), 0x81, modrm.encoding()]);
+    buf.write_i32(src);
+}
+
+// REX.W + $opcode + rd io
+fn emit_rm64dst_i64(buf: &mut Emit, opcode: u8, dst: R64, src: i64) {
+    let rex = REX::w().with_modrm_rm(dst);
+    buf.write_bytes(&[rex.encoding(), opcode | dst.lower_part()]);
+    buf.write_i64(src);
+}
+
+impl EmitArith<R64, R64> for Emit {
+    fn add(&mut self, dst: R64, src: R64) -> &mut Self {
+        emit_rm64dst_r64src(self, 0x01, dst, src);
         self
     }
 
-    fn sub(&mut self, dst: Reg, src: Reg) -> &mut Self {
-        arith_reg_reg(self, 0x29 /* r/m64 += r64 */, dst, src);
+    fn sub(&mut self, dst: R64, src: R64) -> &mut Self {
+        emit_rm64dst_r64src(self, 0x29, dst, src);
         self
     }
 
-    fn cmp(&mut self, dst: Reg, src: Reg) -> &mut Self {
-        arith_reg_reg(self, 0x39 /* r/m64 += r64 */, dst, src);
+    fn cmp(&mut self, dst: R64, src: R64) -> &mut Self {
+        emit_rm64dst_r64src(self, 0x39, dst, src);
         self
     }
 }
 
-impl EmitArith<Reg, Imm64> for Emit {
-    fn add(&mut self, dst: Reg, src: Imm64) -> &mut Self {
-        panic!("not implmented");
-        // arith_reg_reg(self, 0x01 /* r/m64 += r64 */, dst, src).unwrap();
+impl EmitArith<R64, i32> for Emit {
+    fn add(&mut self, dst: R64, src: i32) -> &mut Self {
+        emit_arith_rm64_i32(self, 0, dst, src);
         self
     }
 
-    fn sub(&mut self, dst: Reg, src: Imm64) -> &mut Self {
-        panic!("not implmented");
-        // arith_reg_reg(self, 0x29 /* r/m64 += r64 */, dst, src).unwrap();
+    fn sub(&mut self, dst: R64, src: i32) -> &mut Self {
+        emit_arith_rm64_i32(self, 5, dst, src);
         self
     }
 
-    fn cmp(&mut self, dst: Reg, src: Imm64) -> &mut Self {
-        panic!("not implmented");
+    fn cmp(&mut self, dst: R64, src: i32) -> &mut Self {
+        emit_arith_rm64_i32(self, 7, dst, src);
+        self
+    }
+}
+
+impl EmitMov<R64, R64> for Emit {
+    fn mov(&mut self, dst: R64, src: R64) -> &mut Self {
+        emit_rm64dst_r64src(self, 0x89, dst, src);
+        self
+    }
+}
+
+impl EmitMov<R64, i64> for Emit {
+    fn mov(&mut self, dst: R64, src: i64) -> &mut Self {
+        emit_rm64dst_i64(self, 0xB8, dst, src);
         self
     }
 }

@@ -1,5 +1,7 @@
 /// Basically a way to do multi-dispatch on different kinds of operands.
 
+use byteorder::{ByteOrder, NativeEndian};
+
 pub struct Emit(pub Vec<u8>);
 
 impl Emit {
@@ -12,6 +14,18 @@ impl Emit {
         for b in bs {
             self.0.push(*b);
         }
+    }
+
+    pub fn write_i32(&mut self, i: i32) {
+        let mut buf = [0; 4];
+        NativeEndian::write_i32(&mut buf, i);
+        self.write_bytes(&buf);
+    }
+
+    pub fn write_i64(&mut self, i: i64) {
+        let mut buf = [0; 8];
+        NativeEndian::write_i64(&mut buf, i);
+        self.write_bytes(&buf);
     }
 
     pub fn take(self) -> Vec<u8> {
