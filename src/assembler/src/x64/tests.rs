@@ -86,6 +86,30 @@ impl ATTSyntax for i64 {
     }
 }
 
+impl Enumerate for Addr {
+    fn possible_enumerations() -> Vec<Self> {
+        let r64s = R64::possible_enumerations().into_iter().map(|r| Addr::B(r));
+        r64s.collect()
+    }
+}
+
+impl ATTSyntax for Addr {
+    fn as_att_syntax(&self) -> String {
+        use super::Addr::*;
+
+        match self {
+            &B(ref r) => {
+                let mut disp = "";
+                if r.is_rbp_or_r13() {
+                    disp = "0x0";
+                }
+                format!("{}({})", disp, r.as_att_syntax())
+            }
+            _ => panic!("Not implemented"),
+        }
+    }
+}
+
 // Internal types and impls.
 
 // Push
@@ -93,6 +117,7 @@ impl ATTSyntax for i64 {
 enum Push {
     R64(R64),
     I32(i32),
+    M64(Addr),
 }
 
 impl ATTSyntax for Push {
@@ -103,6 +128,10 @@ impl ATTSyntax for Push {
             &Push::I32(i) => {
                 rator = "pushq";
                 i.as_att_syntax()
+            }
+            &Push::M64(ref m) => {
+                rator = "pushq";
+                m.as_att_syntax()
             }
         };
         // 7: objdump's padding.
@@ -115,17 +144,17 @@ impl Instr for Push {
         match self {
             &Push::R64(r) => buf.push(r),
             &Push::I32(i) => buf.push(i),
+            &Push::M64(ref m) => buf.push(m),
         };
     }
 }
 
 impl Enumerate for Push {
     fn possible_enumerations() -> Vec<Self> {
-        R64::possible_enumerations()
-            .into_iter()
-            .map(|r| Push::R64(r))
-            .chain(i32::possible_enumerations().into_iter().map(|i| Push::I32(i)))
-            .collect()
+        let r64s = R64::possible_enumerations().into_iter().map(|r| Push::R64(r));
+        let i32s = i32::possible_enumerations().into_iter().map(|i| Push::I32(i));
+        let m64s = Addr::possible_enumerations().into_iter().map(|a| Push::M64(a));
+        r64s.chain(i32s).chain(m64s).collect()
     }
 }
 
@@ -327,6 +356,7 @@ impl ATTSyntax for Mov {
 }
 // Test utils.
 
+#[allow(unused)]
 fn assert_encoding<F>(expected: &[u8], f: F)
     where F: for<'a> FnOnce(&'a mut Emit) -> &'a mut Emit
 {
@@ -334,19 +364,6 @@ fn assert_encoding<F>(expected: &[u8], f: F)
     let mut e = Emit(vec![]);
     f(&mut e);
     assert_eq!(e.inner_ref(), expected);
-}
-
-fn assert_att_disassembly<F>(expected: &str, f: F)
-    where F: for<'a> FnOnce(&'a mut Emit) -> &'a mut Emit
-{
-    let mut e = Emit(vec![]);
-    f(&mut e);
-    let disassembly = objdump_disas_lines(e.inner_ref()).join("\n");
-    assert!(disassembly.contains(expected),
-            "{} (binary: {:?}) doesn't contain {}",
-            disassembly,
-            e.inner_ref(),
-            expected);
 }
 
 fn dump_file<A: AsRef<Path>>(path: A, bs: &[u8]) {
@@ -478,6 +495,17 @@ fn bench_emit_push_i32(b: &mut Bencher) {
         let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE / 5) {
             emit.push(-1_i32);
+        }
+    });
+}
+
+#[bench]
+fn bench_emit_push_rm64(b: &mut Bencher) {
+    b.iter(|| {
+        let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
+        for _ in 0..(ALLOC_SIZE / 8) {
+            emit.push(&Addr::B(R64::R12));
+            emit.push(&Addr::B(R64::R13));
         }
     });
 }
