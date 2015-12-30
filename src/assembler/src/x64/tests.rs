@@ -64,7 +64,7 @@ impl ATTSyntax for R64 {
 
 impl Enumerate for i32 {
     fn possible_enumerations() -> Vec<Self> {
-        vec![0, 1, 2, 0x7fffffff, -1, -2, -3]
+        vec![0, 1, 0x7fffffff, -0x7fffffff, -1]
     }
 }
 
@@ -76,7 +76,7 @@ impl ATTSyntax for i32 {
 
 impl Enumerate for i64 {
     fn possible_enumerations() -> Vec<Self> {
-        vec![0, 1, 2, 0x7fffffff, 0xffffffff, -1, -2, -3]
+        vec![0, 1, 0x7fffffffffffffff, -0x7fffffffffffffff, -1]
     }
 }
 
@@ -113,6 +113,7 @@ impl Enumerate for Addr {
         let mut bds = vec![];
         let mut biss = vec![];
         let mut bisds = vec![];
+        let mut iss = vec![];
         for b in R64::possible_enumerations() {
             for d in i32::possible_enumerations() {
                 bds.push(Addr::BD(b, d));
@@ -130,8 +131,18 @@ impl Enumerate for Addr {
                     }
                 }
             }
+            for s in Scale::possible_enumerations() {
+                if b == R64::RSP {
+                    continue;
+                }
+                iss.push(Addr::IS(b, s));
+            }
         }
-        bs.chain(bds.into_iter()).chain(biss.into_iter()).chain(bisds.into_iter()).collect()
+        bs.chain(bds.into_iter())
+          .chain(biss.into_iter())
+          .chain(bisds.into_iter())
+          .chain(iss.into_iter())
+          .collect()
     }
 }
 
@@ -161,34 +172,33 @@ impl ATTSyntax for Addr {
     fn as_att_syntax(&self) -> String {
         use super::Addr::*;
 
-        let base = self.base();
+        let mb_base = self.base();
         let mut index = "".to_owned();
         let mut scale = "".to_owned();
 
         let mb_disp = if let Some(disp) = self.disp() {
             Some(disp)
-        } else if base.is_rbp_or_r13() {
+        } else if mb_base.map_or(false, |b| b.is_rbp_or_r13()) {
+            Some(0)
+        } else if self.is_index_scale() {
             Some(0)
         } else {
             None
         };
 
         match self {
-            &B(_) => {}
+            &B(_) |
             &BD(_, _) => {}
-            &BIS(_, i, s) => {
-                index = format!(",{}", i.as_att_syntax());
-                scale = format!(",{}", s.as_att_syntax());
-            }
+            &BIS(_, i, s) |
+            &IS(i, s) |
             &BISD(_, i, s, _) => {
                 index = format!(",{}", i.as_att_syntax());
                 scale = format!(",{}", s.as_att_syntax());
             }
-            _ => panic!("Not implemented"),
-        }
+        };
         format!("{disp}({base}{index}{scale})",
-                disp = mb_disp.map(|d| disp_as_att_syntax(d)).unwrap_or("".to_owned()),
-                base = base.as_att_syntax(),
+                disp = mb_disp.map_or("".to_owned(), |d| disp_as_att_syntax(d)),
+                base = mb_base.map_or("".to_owned(), |b| b.as_att_syntax()),
                 index = index,
                 scale = scale)
     }
@@ -246,12 +256,14 @@ impl Enumerate for Push {
 
 enum Pop {
     R64(R64),
+    M64(Addr),
 }
 
 impl Instr for Pop {
     fn emit(&self, buf: &mut Emit) {
         match self {
             &Pop::R64(r) => buf.pop(r),
+            &Pop::M64(ref m) => buf.pop(m),
         };
     }
 }
@@ -261,15 +273,20 @@ impl Enumerate for Pop {
         R64::possible_enumerations()
             .into_iter()
             .map(|r| Pop::R64(r))
+            .chain(Addr::possible_enumerations().into_iter().map(|m| Pop::M64(m)))
             .collect()
     }
 }
 
 impl ATTSyntax for Pop {
     fn as_att_syntax(&self) -> String {
-        let rator = "pop";
+        let mut rator = "pop";
         let rand = match self {
             &Pop::R64(r) => r.as_att_syntax(),
+            &Pop::M64(ref m) => {
+                rator = "popq";
+                m.as_att_syntax()
+            }
         };
         // 7: objdump's padding.
         format!("{:7}{}", rator, rand)
@@ -308,6 +325,10 @@ enum Arith {
     AddR64I32(R64, i32),
     SubR64I32(R64, i32),
     CmpR64I32(R64, i32),
+
+    AddR64M64(R64, Addr),
+    SubR64M64(R64, Addr),
+    CmpR64M64(R64, Addr),
 }
 
 impl Instr for Arith {
@@ -322,6 +343,10 @@ impl Instr for Arith {
             &AddR64I32(dst, src) => buf.add(dst, src),
             &SubR64I32(dst, src) => buf.sub(dst, src),
             &CmpR64I32(dst, src) => buf.cmp(dst, src),
+
+            &AddR64M64(dst, ref src) => buf.add(dst, src),
+            &SubR64M64(dst, ref src) => buf.sub(dst, src),
+            &CmpR64M64(dst, ref src) => buf.cmp(dst, src),
         };
     }
 }
@@ -342,6 +367,11 @@ impl Enumerate for Arith {
                 res.push(SubR64I32(*dst, *src));
                 res.push(CmpR64I32(*dst, *src));
             }
+            for src in &Addr::possible_enumerations() {
+                res.push(AddR64M64(*dst, src.clone()));
+                res.push(SubR64M64(*dst, src.clone()));
+                res.push(CmpR64M64(*dst, src.clone()));
+            }
         }
         res
     }
@@ -349,38 +379,61 @@ impl Enumerate for Arith {
 
 impl ATTSyntax for Arith {
     fn as_att_syntax(&self) -> String {
+        let rator = self.rator();
+        let dst = self.dst_as_att_syntax();
+        let src = self.src_as_att_syntax();
+
+        format!("{:7}{},{}", rator, src, dst)
+    }
+}
+
+impl Arith {
+    fn rator(&self) -> String {
         use self::Arith::*;
-        let rator;
-        let rand;
-
         match self {
-            &AddR64R64(dst, src) => {
-                rator = "add";
-                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
-            }
-            &SubR64R64(dst, src) => {
-                rator = "sub";
-                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
-            }
-            &CmpR64R64(dst, src) => {
-                rator = "cmp";
-                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
-            }
-            &AddR64I32(dst, src) => {
-                rator = "add";
-                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
-            }
-            &SubR64I32(dst, src) => {
-                rator = "sub";
-                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
-            }
-            &CmpR64I32(dst, src) => {
-                rator = "cmp";
-                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
-            }
-        };
+            &AddR64R64(_, _) |
+            &AddR64I32(_, _) |
+            &AddR64M64(_, _) => "add",
+            &SubR64R64(_, _) |
+            &SubR64I32(_, _) |
+            &SubR64M64(_, _) => "sub",
+            &CmpR64R64(_, _) |
+            &CmpR64I32(_, _) |
+            &CmpR64M64(_, _) => "cmp",
+        }
+        .to_owned()
+    }
 
-        format!("{:7}{}", rator, rand)
+    fn src_as_att_syntax(&self) -> String {
+        use self::Arith::*;
+        match self {
+            &AddR64R64(_, r) |
+            &SubR64R64(_, r) |
+            &CmpR64R64(_, r) => r.as_att_syntax(),
+
+            &AddR64I32(_, i) |
+            &SubR64I32(_, i) |
+            &CmpR64I32(_, i) => i.as_att_syntax(),
+
+            &AddR64M64(_, ref m) |
+            &SubR64M64(_, ref m) |
+            &CmpR64M64(_, ref m) => m.as_att_syntax(),
+        }
+    }
+
+    fn dst_as_att_syntax(&self) -> String {
+        use self::Arith::*;
+        match self {
+            &AddR64R64(r, _) |
+            &AddR64I32(r, _) |
+            &AddR64M64(r, _) |
+            &SubR64R64(r, _) |
+            &SubR64I32(r, _) |
+            &SubR64M64(r, _) |
+            &CmpR64R64(r, _) |
+            &CmpR64I32(r, _) |
+            &CmpR64M64(r, _) => r.as_att_syntax(),
+        }
     }
 }
 
@@ -389,6 +442,8 @@ impl ATTSyntax for Arith {
 enum Mov {
     R64R64(R64, R64),
     R64I64(R64, i64),
+    R64M64(R64, Addr),
+    M64R64(Addr, R64),
 }
 
 impl Instr for Mov {
@@ -398,6 +453,8 @@ impl Instr for Mov {
         match self {
             &R64R64(dst, src) => buf.mov(dst, src),
             &R64I64(dst, src) => buf.mov(dst, src),
+            &R64M64(dst, ref src) => buf.mov(dst, src),
+            &M64R64(ref dst, src) => buf.mov(dst, src),
         };
     }
 }
@@ -407,12 +464,16 @@ impl Enumerate for Mov {
         use self::Mov::*;
 
         let mut res = vec![];
-        for dst in &R64::possible_enumerations() {
-            for src in &R64::possible_enumerations() {
-                res.push(R64R64(*dst, *src));
+        for r in &R64::possible_enumerations() {
+            for src in R64::possible_enumerations() {
+                res.push(R64R64(*r, src));
             }
-            for src in &i64::possible_enumerations() {
-                res.push(R64I64(*dst, *src));
+            for src in i64::possible_enumerations() {
+                res.push(R64I64(*r, src));
+            }
+            for m in Addr::possible_enumerations() {
+                res.push(R64M64(*r, m.clone()));
+                res.push(M64R64(m, *r));
             }
         }
         res
@@ -431,6 +492,12 @@ impl ATTSyntax for Mov {
             }
             &R64I64(dst, src) => {
                 rator = "movabs";
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &R64M64(dst, ref src) => {
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &M64R64(ref dst, src) => {
                 rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
             }
         };
@@ -485,8 +552,8 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
     }
     let disas_lines = objdump_disas_lines(code_buf.inner_ref());
 
-    // line.len() > 16: filter out lines that are too short.
-    for (disas_line, instr) in disas_lines.iter().filter(|line| line.len() > 16).zip(instrs) {
+    // line.len() > 20: filter out lines that are too short.
+    for (disas_line, instr) in disas_lines.iter().filter(|line| line.len() > 20).zip(instrs) {
         let instr_att = instr.as_att_syntax();
         let mut instr_buf = Emit(vec![]);
         instr.emit(&mut instr_buf);

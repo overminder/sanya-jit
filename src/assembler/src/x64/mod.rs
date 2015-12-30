@@ -126,6 +126,15 @@ enum Mod {
     Indirect8 = 1,
     Indirect32 = 2,
     Direct = 3,
+
+    // Indirect, with rm = bp: index * scale + disp32
+    IndirectBP = 4,
+}
+
+impl Mod {
+    fn encoding(self) -> u8 {
+        (self as u8) & 0x3
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -175,7 +184,7 @@ impl ModRM {
     }
 
     fn encoding(&self) -> u8 {
-        ((self.mod_ as u8) << 6) | (self.reg.lower_part() << 3) | self.rm.lower_part()
+        ((self.mod_.encoding()) << 6) | (self.reg.lower_part() << 3) | self.rm.lower_part()
     }
 }
 
@@ -221,6 +230,10 @@ impl SIB {
         SIB::new(Scale::S1, R64::RSP, b)
     }
 
+    fn new_si(s: Scale, i: R64) -> Self {
+        SIB::new(s, i, R64::RBP)
+    }
+
     fn encoding(self) -> u8 {
         ((self.scale as u8) << 6) | (self.index.lower_part() << 3) | self.base.lower_part()
     }
@@ -228,7 +241,7 @@ impl SIB {
 
 // Memory operand.
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Addr {
     B(R64),
     IS(R64, Scale),
@@ -238,15 +251,22 @@ pub enum Addr {
 }
 
 impl Addr {
-    fn base(&self) -> R64 {
+    fn is_index_scale(&self) -> bool {
+        match self {
+            &Addr::IS(..) => true,
+            _ => false,
+        }
+    }
+
+    fn base(&self) -> Option<R64> {
         use self::Addr::*;
 
         match self {
-            &B(r) => r,
-            &IS(r, _) => r,
-            &BIS(r, _, _) => r,
-            &BD(r, _) => r,
-            &BISD(r, _, _, _) => r,
+            &B(r) |
+            &BIS(r, _, _) |
+            &BD(r, _) |
+            &BISD(r, _, _, _) => Some(r),
+            &IS(_, _) => None,
         }
     }
 
@@ -254,10 +274,10 @@ impl Addr {
         use self::Addr::*;
 
         match self {
-            &B(_) => None,
-            &IS(_, _) => None,
+            &B(_) |
+            &IS(_, _) |
             &BIS(_, _, _) => None,
-            &BD(_, d) => Some(d),
+            &BD(_, d) |
             &BISD(_, _, _, d) => Some(d),
         }
     }
@@ -301,38 +321,7 @@ pub fn is_imm8(i: i32) -> bool {
     i < 128 && i >= -128
 }
 
-// Code emission.
-
-impl EmitPush<R64> for Emit {
-    fn push(&mut self, op: R64) -> &mut Self {
-        REX::none().with_modrm_rm(op).emit(self);
-        self.write_byte(0x50 | op.lower_part());
-        self
-    }
-}
-
-impl EmitPush<i32> for Emit {
-    fn push(&mut self, op: i32) -> &mut Self {
-        self.write_byte(0x68);
-        self.write_i32(op);
-        self
-    }
-}
-
-impl<'a> EmitPush<&'a Addr> for Emit {
-    fn push(&mut self, op: &Addr) -> &mut Self {
-        emit_addr(self, 0xFF, REX::none(), op);
-        self
-    }
-}
-
-impl EmitPop<R64> for Emit {
-    fn pop(&mut self, op: R64) -> &mut Self {
-        REX::none().with_modrm_rm(op).emit(self);
-        self.write_byte(0x58 | op.lower_part());
-        self
-    }
-}
+// Emission utilties.
 
 fn emit_rm64dst_r64src(buf: &mut Emit, opcode: u8, dst: R64, src: R64) {
     let modrm = ModRM::direct(src, dst);
@@ -354,28 +343,37 @@ fn emit_rm64(buf: &mut Emit, opcode: u8, dst: R64, rex: REX) {
     buf.write_byte(opcode | dst.lower_part());
 }
 
-fn emit_addr(buf: &mut Emit, opcode: u8, mut rex: REX, op: &Addr) {
+// XXX: Refactor this.
+fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Addr) {
     use self::Addr::*;
 
     let mut modrm;
     let mut mb_sib = None;
+    let mut mb_disp = None;
 
-    let base = op.base();
-    if base.is_rsp_or_r12() {
-        // rsp | r12: SIB will be in use.
-        mb_sib = Some(SIB::new_b(base));
+    let mb_base = op.base();
+    if let Some(base) = mb_base {
+        if base.is_rsp_or_r12() {
+            // rsp | r12: SIB will be in use.
+            mb_sib = Some(SIB::new_b(base));
+        }
+        modrm = ModRM::new(Mod::Indirect, reg, base);
+    } else {
+        // mod = 00 & rm = RBP: index * scale + disp32
+        assert!(op.is_index_scale());
+        modrm = ModRM::new(Mod::IndirectBP, reg, R64::RSP);
+        mb_disp = Some(0);
     }
-    modrm = ModRM::new(Mod::Indirect, RegOrOpExt::OpExt(6), base);
 
-    let mut mb_disp = op.disp();
-    if let Some(disp) = mb_disp {
+    if let Some(disp) = op.disp() {
         if is_imm8(disp) {
             modrm.mod_ = Mod::Indirect8;
         } else {
             modrm.mod_ = Mod::Indirect32;
         }
+        mb_disp = Some(disp);
     } else {
-        if base.is_rbp_or_r13() {
+        if mb_base.map(|b| b.is_rbp_or_r13()).unwrap_or(false) {
             // bp / r13 can't use Mod::Indirect and thus need to use a imm8
             // as the displacment.
             modrm.mod_ = Mod::Indirect8;
@@ -384,24 +382,16 @@ fn emit_addr(buf: &mut Emit, opcode: u8, mut rex: REX, op: &Addr) {
     }
 
     match op {
-        &B(_) => {
-            // (%base)
-        }
-        &BIS(_, index, scale) => {
-            // (%base, %index, scale)
-            mb_sib = Some(SIB::new(scale, index, base));
-            // To use SIB, ModRM.rm must be 0b100 (i.e., sp or R12)
-            modrm.rm = R64::RSP;
-        }
-        &BD(_, _) => {
-            // disp(%base)
-        }
+        &B(_) |
+        &BD(_, _) => {}
+        &BIS(_, index, scale) |
         &BISD(_, index, scale, _) => {
-            // disp(%base, %index, scale)
-            mb_sib = Some(SIB::new(scale, index, base));
+            mb_sib = Some(SIB::new(scale, index, mb_base.unwrap()));
             modrm.rm = R64::RSP;
         }
-        _ => panic!("Invalid addr: {:?}", op),
+        &IS(index, scale) => {
+            mb_sib = Some(SIB::new_si(scale, index));
+        }
     }
 
     rex = rex.with_modrm(modrm);
@@ -412,12 +402,53 @@ fn emit_addr(buf: &mut Emit, opcode: u8, mut rex: REX, op: &Addr) {
     mb_sib.map(|sib| buf.write_byte(sib.encoding()));
     if modrm.mod_ == Mod::Indirect8 {
         buf.write_byte(mb_disp.unwrap() as u8);
-    } else if modrm.mod_ == Mod::Indirect32 {
+    } else if modrm.mod_ == Mod::Indirect32 || modrm.mod_ == Mod::IndirectBP {
         buf.write_i32(mb_disp.unwrap());
     } else {
         assert_eq!(Mod::Indirect, modrm.mod_);
     }
 }
+
+// Code emission.
+
+impl EmitPush<R64> for Emit {
+    fn push(&mut self, op: R64) -> &mut Self {
+        REX::none().with_modrm_rm(op).emit(self);
+        self.write_byte(0x50 | op.lower_part());
+        self
+    }
+}
+
+impl EmitPush<i32> for Emit {
+    fn push(&mut self, op: i32) -> &mut Self {
+        self.write_byte(0x68);
+        self.write_i32(op);
+        self
+    }
+}
+
+impl<'a> EmitPush<&'a Addr> for Emit {
+    fn push(&mut self, op: &Addr) -> &mut Self {
+        emit_addr(self, REX::none(), 0xFF, RegOrOpExt::OpExt(6), op);
+        self
+    }
+}
+
+impl EmitPop<R64> for Emit {
+    fn pop(&mut self, op: R64) -> &mut Self {
+        REX::none().with_modrm_rm(op).emit(self);
+        self.write_byte(0x58 | op.lower_part());
+        self
+    }
+}
+
+impl<'a> EmitPop<&'a Addr> for Emit {
+    fn pop(&mut self, op: &Addr) -> &mut Self {
+        emit_addr(self, REX::none(), 0x8F, RegOrOpExt::OpExt(0), op);
+        self
+    }
+}
+
 
 impl EmitArith<R64, R64> for Emit {
     fn add(&mut self, dst: R64, src: R64) -> &mut Self {
@@ -453,6 +484,23 @@ impl EmitArith<R64, i32> for Emit {
     }
 }
 
+impl<'a> EmitArith<R64, &'a Addr> for Emit {
+    fn add(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr(self, REX::w(), 0x03, RegOrOpExt::Reg(dst), src);
+        self
+    }
+
+    fn sub(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr(self, REX::w(), 0x2B, RegOrOpExt::Reg(dst), src);
+        self
+    }
+
+    fn cmp(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr(self, REX::w(), 0x3B, RegOrOpExt::Reg(dst), src);
+        self
+    }
+}
+
 impl EmitMov<R64, R64> for Emit {
     fn mov(&mut self, dst: R64, src: R64) -> &mut Self {
         emit_rm64dst_r64src(self, 0x89, dst, src);
@@ -464,6 +512,20 @@ impl EmitMov<R64, i64> for Emit {
     fn mov(&mut self, dst: R64, src: i64) -> &mut Self {
         emit_rm64(self, 0xB8, dst, REX::w());
         self.write_i64(src);
+        self
+    }
+}
+
+impl<'a> EmitMov<R64, &'a Addr> for Emit {
+    fn mov(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr(self, REX::w(), 0x8B, RegOrOpExt::Reg(dst), src);
+        self
+    }
+}
+
+impl<'a> EmitMov<&'a Addr, R64> for Emit {
+    fn mov(&mut self, dst: &Addr, src: R64) -> &mut Self {
+        emit_addr(self, REX::w(), 0x89, RegOrOpExt::Reg(src), dst);
         self
     }
 }
