@@ -248,12 +248,21 @@ pub enum Addr {
     BIS(R64, R64, Scale),
     BD(R64, i32),
     BISD(R64, R64, Scale, i32),
+    // | rip-relative: disp32(%rip)
+    PcRel(i32),
 }
 
 impl Addr {
     fn is_index_scale(&self) -> bool {
         match self {
             &Addr::IS(..) => true,
+            _ => false,
+        }
+    }
+
+    fn is_pc_relative(&self) -> bool {
+        match self {
+            &Addr::PcRel(..) => true,
             _ => false,
         }
     }
@@ -267,6 +276,7 @@ impl Addr {
             &BD(r, _) |
             &BISD(r, _, _, _) => Some(r),
             &IS(_, _) => None,
+            &PcRel(_) => Some(R64::RBP),
         }
     }
 
@@ -278,7 +288,8 @@ impl Addr {
             &IS(_, _) |
             &BIS(_, _, _) => None,
             &BD(_, d) |
-            &BISD(_, _, _, d) => Some(d),
+            &BISD(_, _, _, d) |
+            &PcRel(d) => Some(d),
         }
     }
 }
@@ -338,9 +349,17 @@ fn emit_arith_rm64_i32(buf: &mut Emit, opext: u8, dst: R64, src: i32) {
     buf.write_i32(src);
 }
 
-fn emit_rm64(buf: &mut Emit, opcode: u8, dst: R64, rex: REX) {
+// opcode /r
+fn emit_rm64_r(buf: &mut Emit, opcode: u8, dst: R64, rex: REX) {
     rex.with_modrm_rm(dst).emit(buf);
     buf.write_byte(opcode | dst.lower_part());
+}
+
+fn emit_rm64_opext(buf: &mut Emit, rex: REX, opcode: u8, opext: u8, rm: R64) {
+    let modrm = ModRM::direct_opext(opext, rm);
+    rex.with_modrm_rm(rm).emit(buf);
+    buf.write_byte(opcode);
+    buf.write_byte(modrm.encoding());
 }
 
 // XXX: Refactor this.
@@ -366,7 +385,9 @@ fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Add
     }
 
     if let Some(disp) = op.disp() {
-        if is_imm8(disp) {
+        if op.is_pc_relative() {
+            // Must be disp32: mod = 0b00
+        } else if is_imm8(disp) {
             modrm.mod_ = Mod::Indirect8;
         } else {
             modrm.mod_ = Mod::Indirect32;
@@ -383,7 +404,8 @@ fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Add
 
     match op {
         &B(_) |
-        &BD(_, _) => {}
+        &BD(_, _) |
+        &PcRel(_) => {}
         &BIS(_, index, scale) |
         &BISD(_, index, scale, _) => {
             mb_sib = Some(SIB::new(scale, index, mb_base.unwrap()));
@@ -402,7 +424,7 @@ fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Add
     mb_sib.map(|sib| buf.write_byte(sib.encoding()));
     if modrm.mod_ == Mod::Indirect8 {
         buf.write_byte(mb_disp.unwrap() as u8);
-    } else if modrm.mod_ == Mod::Indirect32 || modrm.mod_ == Mod::IndirectBP {
+    } else if modrm.mod_ == Mod::Indirect32 || modrm.mod_ == Mod::IndirectBP || op.is_pc_relative() {
         buf.write_i32(mb_disp.unwrap());
     } else {
         assert_eq!(Mod::Indirect, modrm.mod_);
@@ -510,7 +532,7 @@ impl EmitMov<R64, R64> for Emit {
 
 impl EmitMov<R64, i64> for Emit {
     fn mov(&mut self, dst: R64, src: i64) -> &mut Self {
-        emit_rm64(self, 0xB8, dst, REX::w());
+        emit_rm64_r(self, 0xB8, dst, REX::w());
         self.write_i64(src);
         self
     }
@@ -526,6 +548,37 @@ impl<'a> EmitMov<R64, &'a Addr> for Emit {
 impl<'a> EmitMov<&'a Addr, R64> for Emit {
     fn mov(&mut self, dst: &Addr, src: R64) -> &mut Self {
         emit_addr(self, REX::w(), 0x89, RegOrOpExt::Reg(src), dst);
+        self
+    }
+}
+
+impl<'a> EmitLea<R64, &'a Addr> for Emit {
+    fn lea(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr(self, REX::w(), 0x8D, RegOrOpExt::Reg(dst), src);
+        self
+    }
+}
+
+impl EmitBranch<R64> for Emit {
+    fn jmp(&mut self, op: R64) -> &mut Self {
+        emit_rm64_opext(self, REX::none(), 0xFF, 4, op);
+        self
+    }
+
+    fn call(&mut self, op: R64) -> &mut Self {
+        emit_rm64_opext(self, REX::none(), 0xFF, 2, op);
+        self
+    }
+}
+
+impl<'a> EmitBranch<&'a Addr> for Emit {
+    fn jmp(&mut self, op: &Addr) -> &mut Self {
+        emit_addr(self, REX::none(), 0xFF, RegOrOpExt::OpExt(4), op);
+        self
+    }
+
+    fn call(&mut self, op: &Addr) -> &mut Self {
+        emit_addr(self, REX::none(), 0xFF, RegOrOpExt::OpExt(2), op);
         self
     }
 }

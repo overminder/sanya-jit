@@ -114,6 +114,7 @@ impl Enumerate for Addr {
         let mut biss = vec![];
         let mut bisds = vec![];
         let mut iss = vec![];
+        let pcrels = i32::possible_enumerations().into_iter().map(|d| Addr::PcRel(d));
         for b in R64::possible_enumerations() {
             for d in i32::possible_enumerations() {
                 bds.push(Addr::BD(b, d));
@@ -142,6 +143,7 @@ impl Enumerate for Addr {
           .chain(biss.into_iter())
           .chain(bisds.into_iter())
           .chain(iss.into_iter())
+          .chain(pcrels)
           .collect()
     }
 }
@@ -172,13 +174,13 @@ impl ATTSyntax for Addr {
     fn as_att_syntax(&self) -> String {
         use super::Addr::*;
 
-        let mb_base = self.base();
+        let mut base = self.base().map_or("".to_owned(), |r| r.as_att_syntax());
         let mut index = "".to_owned();
         let mut scale = "".to_owned();
 
         let mb_disp = if let Some(disp) = self.disp() {
             Some(disp)
-        } else if mb_base.map_or(false, |b| b.is_rbp_or_r13()) {
+        } else if self.base().map_or(false, |b| b.is_rbp_or_r13()) {
             Some(0)
         } else if self.is_index_scale() {
             Some(0)
@@ -195,10 +197,13 @@ impl ATTSyntax for Addr {
                 index = format!(",{}", i.as_att_syntax());
                 scale = format!(",{}", s.as_att_syntax());
             }
+            &PcRel(_) => {
+                base = "%rip".to_owned();
+            }
         };
         format!("{disp}({base}{index}{scale})",
                 disp = mb_disp.map_or("".to_owned(), |d| disp_as_att_syntax(d)),
-                base = mb_base.map_or("".to_owned(), |b| b.as_att_syntax()),
+                base = base,
                 index = index,
                 scale = scale)
     }
@@ -290,28 +295,6 @@ impl ATTSyntax for Pop {
         };
         // 7: objdump's padding.
         format!("{:7}{}", rator, rand)
-    }
-}
-
-// Ret
-
-struct Ret;
-
-impl Instr for Ret {
-    fn emit(&self, buf: &mut Emit) {
-        buf.ret();
-    }
-}
-
-impl Enumerate for Ret {
-    fn possible_enumerations() -> Vec<Self> {
-        vec![Ret]
-    }
-}
-
-impl ATTSyntax for Ret {
-    fn as_att_syntax(&self) -> String {
-        "ret".to_owned()
     }
 }
 
@@ -505,6 +488,151 @@ impl ATTSyntax for Mov {
         format!("{:7}{}", rator, rand)
     }
 }
+
+// Lea.
+
+enum Lea {
+    R64M64(R64, Addr),
+}
+
+impl Instr for Lea {
+    fn emit(&self, buf: &mut Emit) {
+        use self::Lea::*;
+
+        match self {
+            &R64M64(dst, ref src) => buf.lea(dst, src),
+        };
+    }
+}
+
+impl Enumerate for Lea {
+    fn possible_enumerations() -> Vec<Self> {
+        use self::Lea::*;
+
+        let mut res = vec![];
+        for r in &R64::possible_enumerations() {
+            for m in Addr::possible_enumerations() {
+                res.push(R64M64(*r, m));
+            }
+        }
+        res
+    }
+}
+
+impl ATTSyntax for Lea {
+    fn as_att_syntax(&self) -> String {
+        use self::Lea::*;
+        let rator = "lea";
+        let rand;
+
+        match self {
+            &R64M64(dst, ref src) => {
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+        };
+
+        format!("{:7}{}", rator, rand)
+    }
+}
+
+// Ret
+
+struct Ret;
+
+impl Instr for Ret {
+    fn emit(&self, buf: &mut Emit) {
+        buf.ret();
+    }
+}
+
+impl Enumerate for Ret {
+    fn possible_enumerations() -> Vec<Self> {
+        vec![Ret]
+    }
+}
+
+impl ATTSyntax for Ret {
+    fn as_att_syntax(&self) -> String {
+        "ret".to_owned()
+    }
+}
+
+// Branches.
+
+enum Branch {
+    JmpR64(R64),
+    CallR64(R64),
+    JmpM64(Addr),
+    CallM64(Addr),
+}
+
+impl Instr for Branch {
+    fn emit(&self, buf: &mut Emit) {
+        use self::Branch::*;
+
+        match self {
+            &JmpR64(r) => {
+                buf.jmp(r);
+            }
+            &CallR64(r) => {
+                buf.call(r);
+            }
+            &JmpM64(ref m) => {
+                buf.jmp(m);
+            }
+            &CallM64(ref m) => {
+                buf.call(m);
+            }
+        }
+    }
+}
+
+impl Enumerate for Branch {
+    fn possible_enumerations() -> Vec<Self> {
+        use self::Branch::*;
+
+        let mut res = vec![];
+        for r in &R64::possible_enumerations() {
+            res.push(JmpR64(*r));
+            res.push(CallR64(*r));
+        }
+        for m in Addr::possible_enumerations() {
+            res.push(JmpM64(m.clone()));
+            res.push(CallM64(m));
+        }
+        res
+    }
+}
+
+impl ATTSyntax for Branch {
+    fn as_att_syntax(&self) -> String {
+        use self::Branch::*;
+
+        let rator;
+        let rand;
+
+        match self {
+            &JmpR64(r) => {
+                rator = "jmpq";
+                rand = r.as_att_syntax();
+            }
+            &CallR64(r) => {
+                rator = "callq";
+                rand = r.as_att_syntax();
+            }
+            &JmpM64(ref m) => {
+                rator = "jmpq";
+                rand = m.as_att_syntax();
+            }
+            &CallM64(ref m) => {
+                rator = "callq";
+                rand = m.as_att_syntax();
+            }
+        }
+        format!("{:7}*{}", rator, rand)
+    }
+}
+
 // Test utils.
 
 #[allow(unused)]
@@ -574,9 +702,11 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
 fn test_assembly_matches_disassembly() {
     assert_assembly_matches_disassembly::<Push>();
     assert_assembly_matches_disassembly::<Pop>();
-    assert_assembly_matches_disassembly::<Ret>();
     assert_assembly_matches_disassembly::<Arith>();
     assert_assembly_matches_disassembly::<Mov>();
+
+    assert_assembly_matches_disassembly::<Branch>();
+    assert_assembly_matches_disassembly::<Ret>();
 }
 
 #[test]
