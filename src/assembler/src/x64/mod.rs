@@ -120,7 +120,7 @@ impl REX {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Mod {
     Indirect = 0,
     Indirect8 = 1,
@@ -233,8 +233,34 @@ pub enum Addr {
     B(R64),
     IS(R64, Scale),
     BIS(R64, R64, Scale),
-    BD(R64, i64),
-    BISD(R64, R64, Scale, i64),
+    BD(R64, i32),
+    BISD(R64, R64, Scale, i32),
+}
+
+impl Addr {
+    fn base(&self) -> R64 {
+        use self::Addr::*;
+
+        match self {
+            &B(r) => r,
+            &IS(r, _) => r,
+            &BIS(r, _, _) => r,
+            &BD(r, _) => r,
+            &BISD(r, _, _, _) => r,
+        }
+    }
+
+    fn disp(&self) -> Option<i32> {
+        use self::Addr::*;
+
+        match self {
+            &B(_) => None,
+            &IS(_, _) => None,
+            &BIS(_, _, _) => None,
+            &BD(_, d) => Some(d),
+            &BISD(_, _, _, d) => Some(d),
+        }
+    }
 }
 
 impl Add for R64 {
@@ -244,9 +270,9 @@ impl Add for R64 {
     }
 }
 
-impl Add<i64> for R64 {
+impl Add<i32> for R64 {
     type Output = Addr;
-    fn add(self, rhs: i64) -> Self::Output {
+    fn add(self, rhs: i32) -> Self::Output {
         Addr::BD(self, rhs)
     }
 }
@@ -271,6 +297,10 @@ impl Mul<u8> for R64 {
     }
 }
 
+pub fn is_imm8(i: i32) -> bool {
+    i < 128 && i >= -128
+}
+
 // Code emission.
 
 impl EmitPush<R64> for Emit {
@@ -291,34 +321,7 @@ impl EmitPush<i32> for Emit {
 
 impl<'a> EmitPush<&'a Addr> for Emit {
     fn push(&mut self, op: &Addr) -> &mut Self {
-        use self::Addr::*;
-
-        match op {
-            &B(r) => {
-                // push (%reg):
-                let mut modrm = ModRM::new(Mod::Indirect, RegOrOpExt::OpExt(6), r);
-                let mut rex = REX::none();
-                let mut mb_sib = None;
-                let mut mb_disp = None;
-
-                if r.is_rsp_or_r12() {
-                    // rsp | r12: special case.
-                    let sib = SIB::new_b(r);
-                    rex = rex.with_sib(sib);
-                    mb_sib = Some(sib)
-                } else if r.is_rbp_or_r13() {
-                    modrm.mod_ = Mod::Indirect8;
-                    mb_disp = Some(0);
-                };
-                rex = rex.with_modrm(modrm);
-                rex.emit(self);
-                self.write_byte(0xFF);
-                self.write_byte(modrm.encoding());
-                mb_sib.map(|sib| self.write_byte(sib.encoding()));
-                mb_disp.map(|disp| self.write_byte(disp));
-            }
-            _ => panic!("Not implemented"),
-        }
+        emit_addr(self, 0xFF, REX::none(), op);
         self
     }
 }
@@ -349,6 +352,71 @@ fn emit_arith_rm64_i32(buf: &mut Emit, opext: u8, dst: R64, src: i32) {
 fn emit_rm64(buf: &mut Emit, opcode: u8, dst: R64, rex: REX) {
     rex.with_modrm_rm(dst).emit(buf);
     buf.write_byte(opcode | dst.lower_part());
+}
+
+fn emit_addr(buf: &mut Emit, opcode: u8, mut rex: REX, op: &Addr) {
+    use self::Addr::*;
+
+    let mut modrm;
+    let mut mb_sib = None;
+
+    let base = op.base();
+    if base.is_rsp_or_r12() {
+        // rsp | r12: SIB will be in use.
+        mb_sib = Some(SIB::new_b(base));
+    }
+    modrm = ModRM::new(Mod::Indirect, RegOrOpExt::OpExt(6), base);
+
+    let mut mb_disp = op.disp();
+    if let Some(disp) = mb_disp {
+        if is_imm8(disp) {
+            modrm.mod_ = Mod::Indirect8;
+        } else {
+            modrm.mod_ = Mod::Indirect32;
+        }
+    } else {
+        if base.is_rbp_or_r13() {
+            // bp / r13 can't use Mod::Indirect and thus need to use a imm8
+            // as the displacment.
+            modrm.mod_ = Mod::Indirect8;
+            mb_disp = Some(0);
+        }
+    }
+
+    match op {
+        &B(_) => {
+            // (%base)
+        }
+        &BIS(_, index, scale) => {
+            // (%base, %index, scale)
+            mb_sib = Some(SIB::new(scale, index, base));
+            // To use SIB, ModRM.rm must be 0b100 (i.e., sp or R12)
+            modrm.rm = R64::RSP;
+        }
+        &BD(_, _) => {
+            // disp(%base)
+        }
+        &BISD(_, index, scale, _) => {
+            // disp(%base, %index, scale)
+            mb_sib = Some(SIB::new(scale, index, base));
+            modrm.rm = R64::RSP;
+        }
+        _ => panic!("Invalid addr: {:?}", op),
+    }
+
+    rex = rex.with_modrm(modrm);
+    mb_sib.map(|sib| rex = rex.with_sib(sib));
+    rex.emit(buf);
+    buf.write_byte(opcode);
+    buf.write_byte(modrm.encoding());
+    mb_sib.map(|sib| buf.write_byte(sib.encoding()));
+    if modrm.mod_ == Mod::Indirect8 {
+        buf.write_byte(mb_disp.unwrap() as u8);
+    } else if modrm.mod_ == Mod::Indirect32 {
+        buf.write_i32(mb_disp.unwrap());
+    } else {
+        assert_eq!(Mod::Indirect, modrm.mod_);
+    }
 }
 
 impl EmitArith<R64, R64> for Emit {

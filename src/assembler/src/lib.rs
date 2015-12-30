@@ -1,4 +1,5 @@
 #![feature(test)]
+#![feature(zero_one)]
 
 extern crate mmap;
 extern crate byteorder;

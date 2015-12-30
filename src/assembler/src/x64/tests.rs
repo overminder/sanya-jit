@@ -12,7 +12,7 @@ use test::Bencher;
 
 // Test traits.
 
-// XXX: Consider switch to quickcheck when we have time.
+// XXX: Consider switching to quickcheck when we have time.
 trait Enumerate : Sized {
     fn possible_enumerations() -> Vec<Self>;
 }
@@ -80,6 +80,27 @@ impl Enumerate for i64 {
     }
 }
 
+impl Enumerate for Scale {
+    fn possible_enumerations() -> Vec<Self> {
+        use super::Scale::*;
+        vec![S1, S2, S4, S8]
+    }
+}
+
+impl ATTSyntax for Scale {
+    fn as_att_syntax(&self) -> String {
+        use super::Scale::*;
+
+        match self {
+            &S1 => "1",
+            &S2 => "2",
+            &S4 => "4",
+            &S8 => "8",
+        }
+        .to_owned()
+    }
+}
+
 impl ATTSyntax for i64 {
     fn as_att_syntax(&self) -> String {
         format!("$0x{:x}", *self)
@@ -88,8 +109,51 @@ impl ATTSyntax for i64 {
 
 impl Enumerate for Addr {
     fn possible_enumerations() -> Vec<Self> {
-        let r64s = R64::possible_enumerations().into_iter().map(|r| Addr::B(r));
-        r64s.collect()
+        let bs = R64::possible_enumerations().into_iter().map(|r| Addr::B(r));
+        let mut bds = vec![];
+        let mut biss = vec![];
+        let mut bisds = vec![];
+        for b in R64::possible_enumerations() {
+            for d in i32::possible_enumerations() {
+                bds.push(Addr::BD(b, d));
+            }
+            for i in R64::possible_enumerations() {
+                if i == R64::RSP {
+                    // %sp is not a valid index register.
+                    continue;
+                }
+                for s in Scale::possible_enumerations() {
+                    biss.push(Addr::BIS(b, i, s));
+
+                    for d in i32::possible_enumerations() {
+                        bisds.push(Addr::BISD(b, i, s, d));
+                    }
+                }
+            }
+        }
+        bs.chain(bds.into_iter()).chain(biss.into_iter()).chain(bisds.into_iter()).collect()
+    }
+}
+
+fn disp_as_att_syntax(i: i32) -> String {
+    use std::fmt::LowerHex;
+    use std::ops::Neg;
+    use std::num::Zero;
+
+    fn format<A>(i: A) -> String
+        where A: Neg<Output = A> + LowerHex + PartialOrd + Zero
+    {
+        if i < A::zero() {
+            format!("-0x{:x}", -i)
+        } else {
+            format!("0x{:x}", i)
+        }
+    }
+
+    if is_imm8(i) {
+        format(i as i8)
+    } else {
+        format(i)
     }
 }
 
@@ -97,16 +161,36 @@ impl ATTSyntax for Addr {
     fn as_att_syntax(&self) -> String {
         use super::Addr::*;
 
+        let base = self.base();
+        let mut index = "".to_owned();
+        let mut scale = "".to_owned();
+
+        let mb_disp = if let Some(disp) = self.disp() {
+            Some(disp)
+        } else if base.is_rbp_or_r13() {
+            Some(0)
+        } else {
+            None
+        };
+
         match self {
-            &B(ref r) => {
-                let mut disp = "";
-                if r.is_rbp_or_r13() {
-                    disp = "0x0";
-                }
-                format!("{}({})", disp, r.as_att_syntax())
+            &B(_) => {}
+            &BD(_, _) => {}
+            &BIS(_, i, s) => {
+                index = format!(",{}", i.as_att_syntax());
+                scale = format!(",{}", s.as_att_syntax());
+            }
+            &BISD(_, i, s, _) => {
+                index = format!(",{}", i.as_att_syntax());
+                scale = format!(",{}", s.as_att_syntax());
             }
             _ => panic!("Not implemented"),
         }
+        format!("{disp}({base}{index}{scale})",
+                disp = mb_disp.map(|d| disp_as_att_syntax(d)).unwrap_or("".to_owned()),
+                base = base.as_att_syntax(),
+                index = index,
+                scale = scale)
     }
 }
 
@@ -183,7 +267,7 @@ impl Enumerate for Pop {
 
 impl ATTSyntax for Pop {
     fn as_att_syntax(&self) -> String {
-        let mut rator = "pop";
+        let rator = "pop";
         let rand = match self {
             &Pop::R64(r) => r.as_att_syntax(),
         };
@@ -266,8 +350,8 @@ impl Enumerate for Arith {
 impl ATTSyntax for Arith {
     fn as_att_syntax(&self) -> String {
         use self::Arith::*;
-        let mut rator;
-        let mut rand;
+        let rator;
+        let rand;
 
         match self {
             &AddR64R64(dst, src) => {
@@ -339,7 +423,7 @@ impl ATTSyntax for Mov {
     fn as_att_syntax(&self) -> String {
         use self::Mov::*;
         let mut rator = "mov";
-        let mut rand;
+        let rand;
 
         match self {
             &R64R64(dst, src) => {
