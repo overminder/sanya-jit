@@ -19,7 +19,11 @@ use byteorder::{ByteOrder, NativeEndian};
 pub struct Emit(Vec<u8>);
 
 impl Emit {
-    pub fn new(inner: Vec<u8>) -> Self {
+    pub fn new() -> Self {
+        Emit(vec![])
+    }
+
+    pub fn to_vec(inner: Vec<u8>) -> Self {
         Emit(inner)
     }
 
@@ -54,23 +58,27 @@ impl Emit {
         self.write_bytes(&buf);
     }
 
-    pub fn take(self) -> Vec<u8> {
-        self.0
-    }
-
-    pub fn inner_ref(&self) -> &[u8] {
-        &self.0
-    }
-
     pub fn bind(&mut self, label: &mut Label) -> &mut Self {
         label.bind(self);
         self
     }
 }
 
+impl Into<Vec<u8>> for Emit {
+    fn into(self) -> Vec<u8> {
+        self.0
+    }
+}
+
 impl AsMut<Vec<u8>> for Emit {
     fn as_mut(&mut self) -> &mut Vec<u8> {
         &mut self.0
+    }
+}
+
+impl AsRef<[u8]> for Emit {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -90,7 +98,7 @@ impl Label {
     pub fn bind(&mut self, emit: &mut Emit) {
         *self = match self {
             &mut Label::Unbound { ref mut patch_ixs } => {
-                let here = emit.inner_ref().len();
+                let here = emit.as_ref().len();
                 for patch_ix in patch_ixs.iter().cloned() {
                     emit.patch_i32(patch_ix - 4, (here - patch_ix) as i32);
                 }
