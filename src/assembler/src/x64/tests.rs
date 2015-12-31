@@ -9,6 +9,8 @@ use std::io::{BufReader, BufRead, Write};
 use super::*;
 use super::traits::*;
 use test::Bencher;
+use super::Addr::*;
+use super::Scale::*;
 
 // Test traits.
 
@@ -64,7 +66,7 @@ impl ATTSyntax for R64 {
 
 impl Enumerate for i32 {
     fn possible_enumerations() -> Vec<Self> {
-        vec![0, 1, 0x7fffffff, -0x7fffffff, -1]
+        vec![0, 1, 127, 255, 0x7fffffff, -0x7fffffff, -127, -1]
     }
 }
 
@@ -82,15 +84,12 @@ impl Enumerate for i64 {
 
 impl Enumerate for Scale {
     fn possible_enumerations() -> Vec<Self> {
-        use super::Scale::*;
         vec![S1, S2, S4, S8]
     }
 }
 
 impl ATTSyntax for Scale {
     fn as_att_syntax(&self) -> String {
-        use super::Scale::*;
-
         match self {
             &S1 => "1",
             &S2 => "2",
@@ -148,32 +147,49 @@ impl Enumerate for Addr {
     }
 }
 
-fn disp_as_att_syntax(i: i32) -> String {
-    use std::fmt::LowerHex;
-    use std::ops::Neg;
-    use std::num::Zero;
+enum Disp {
+    I32(i32),
+    U32(u32),
+}
 
-    fn format<A>(i: A) -> String
-        where A: Neg<Output = A> + LowerHex + PartialOrd + Zero
-    {
-        if i < A::zero() {
-            format!("-0x{:x}", -i)
-        } else {
-            format!("0x{:x}", i)
+impl ATTSyntax for Disp {
+    fn as_att_syntax(&self) -> String {
+        use std::fmt::LowerHex;
+        use std::ops::Neg;
+        use std::num::Zero;
+
+        fn format<A>(i: A) -> String
+            where A: Neg<Output = A> + LowerHex + PartialOrd + Zero
+        {
+            if i < A::zero() {
+                format!("-0x{:x}", -i)
+            } else {
+                format!("0x{:x}", i)
+            }
         }
-    }
 
-    if is_imm8(i) {
-        format(i as i8)
-    } else {
-        format(i)
+        match self {
+            &Disp::I32(i) => {
+                if is_imm8(i) {
+                    format(i as i8)
+                } else {
+                    format(i)
+                }
+            }
+            &Disp::U32(u) => {
+                if u < 256 {
+                    format!("0x{:x}", u as u8)
+                } else {
+                    format!("0x{:x}", u)
+                }
+            }
+        }
+
     }
 }
 
 impl ATTSyntax for Addr {
     fn as_att_syntax(&self) -> String {
-        use super::Addr::*;
-
         let mut base = self.base().map_or("".to_owned(), |r| r.as_att_syntax());
         let mut index = "".to_owned();
         let mut scale = "".to_owned();
@@ -202,7 +218,7 @@ impl ATTSyntax for Addr {
             }
         };
         format!("{disp}({base}{index}{scale})",
-                disp = mb_disp.map_or("".to_owned(), |d| disp_as_att_syntax(d)),
+                disp = mb_disp.map_or("".to_owned(), |d| Disp::I32(d).as_att_syntax()),
                 base = base,
                 index = index,
                 scale = scale)
@@ -633,6 +649,73 @@ impl ATTSyntax for Branch {
     }
 }
 
+impl Enumerate for Cond {
+    fn possible_enumerations() -> Vec<Self> {
+        use super::Cond::*;
+
+        vec![E, NE, L, G, LE, GE]
+    }
+}
+
+struct Jcc {
+    cond: Cond,
+    offset: i32,
+    here: u32,
+}
+
+impl Instr for Jcc {
+    fn emit(&self, buf: &mut Emit) {
+        buf.jcc(self.cond, self.offset);
+    }
+}
+
+fn jcc_insn_size(offset: i32) -> u32 {
+    if is_imm8(offset) {
+        2
+    } else {
+        6
+    }
+}
+
+impl ATTSyntax for Jcc {
+    fn as_att_syntax(&self) -> String {
+        use super::Cond::*;
+        use std::num::Wrapping;
+
+        let rator = match self.cond {
+            E => "je",
+            NE => "jne",
+            L => "jl",
+            G => "jg",
+            LE => "jle",
+            GE => "jge",
+        };
+
+        let dst = Wrapping(self.here) + Wrapping(self.offset as u32) +
+                  Wrapping(jcc_insn_size(self.offset));
+
+        format!("{:7}{}", rator, Disp::U32(dst.0).as_att_syntax())
+    }
+}
+
+impl Enumerate for Jcc {
+    fn possible_enumerations() -> Vec<Self> {
+        let mut res = vec![];
+        let mut here = 0;
+        for i in &i32::possible_enumerations() {
+            for c in Cond::possible_enumerations() {
+                res.push(Jcc {
+                    cond: c,
+                    offset: *i,
+                    here: here,
+                });
+                here += jcc_insn_size(*i);
+            }
+        }
+        res
+    }
+}
+
 // Test utils.
 
 #[allow(unused)]
@@ -707,6 +790,7 @@ fn test_assembly_matches_disassembly() {
 
     assert_assembly_matches_disassembly::<Branch>();
     assert_assembly_matches_disassembly::<Ret>();
+    assert_assembly_matches_disassembly::<Jcc>();
 }
 
 #[test]
@@ -734,6 +818,22 @@ fn test_jit_add() {
     let jitmem = JitMem::new(emit.inner_ref());
     let res = unsafe { jitmem.call_ptr6_ptr(0, 1, 2, 3, 4, 5) };
     assert_eq!(9, res);
+}
+
+#[test]
+fn test_jit_call() {
+    use mem::JitMem;
+    let mut emit = Emit(vec![]);
+    extern "C" fn neg(a: i64) -> i64 {
+        -a
+    }
+
+    emit.mov(R64::RAX, R64::RDI)
+        .mov(R64::RDI, R64::RSI)
+        .jmp(R64::RAX);
+    let jitmem = JitMem::new(emit.inner_ref());
+    let res = unsafe { jitmem.call_ptr6_ptr(neg as isize, 1, 2, 3, 4, 5) };
+    assert_eq!(-1, res);
 }
 
 // Benchmarks.

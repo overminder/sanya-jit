@@ -1,5 +1,7 @@
 /// Basically a way to do multi-dispatch on different kinds of operands.
 
+use super::consts::Cond;
+
 use byteorder::{ByteOrder, NativeEndian};
 
 pub struct Emit(pub Vec<u8>);
@@ -66,6 +68,34 @@ pub trait EmitLea<Dst, Src> {
 pub trait EmitBranch<Op> {
     fn jmp(&mut self, op: Op) -> &mut Self;
     fn call(&mut self, op: Op) -> &mut Self;
+}
+
+pub trait EmitJcc<Op> {
+    fn jcc(&mut self, cond: Cond, op: Op) -> &mut Self;
+
+    fn je(&mut self, op: Op) -> &mut Self {
+        self.jcc(Cond::E, op)
+    }
+
+    fn jne(&mut self, op: Op) -> &mut Self {
+        self.jcc(Cond::NE, op)
+    }
+
+    fn jl(&mut self, op: Op) -> &mut Self {
+        self.jcc(Cond::L, op)
+    }
+
+    fn jge(&mut self, op: Op) -> &mut Self {
+        self.jcc(Cond::GE, op)
+    }
+
+    fn jle(&mut self, op: Op) -> &mut Self {
+        self.jcc(Cond::LE, op)
+    }
+
+    fn jg(&mut self, op: Op) -> &mut Self {
+        self.jcc(Cond::G, op)
+    }
 }
 
 pub trait EmitRet {

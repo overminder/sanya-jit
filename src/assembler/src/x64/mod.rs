@@ -1,6 +1,11 @@
 pub mod traits;
 mod tests;
+pub mod encoding;
+mod consts;
 
+pub use self::consts::*;
+pub use self::encoding::*;
+use self::encoding::Addr::*;
 use self::traits::*;
 
 use std::ops::{Add, Mul};
@@ -9,291 +14,6 @@ use std::ops::{Add, Mul};
 /// And http://wiki.osdev.org/X86-64_Instruction_Encoding
 /// And http://www.felixcloutier.com/x86
 /// And pypy/rpython/jit/backend/x86/rx86.py
-#[repr(u8)]
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
-pub enum R64 {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
-
-    RSP = 4,
-    RBP = 5,
-    RSI = 6,
-    RDI = 7,
-
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
-}
-
-impl R64 {
-    pub fn lower_part(self) -> u8 {
-        (self as u8) & 0x7
-    }
-
-    pub fn is_extended(self) -> bool {
-        (self as u8) & 0x8 == 0x8
-    }
-
-    fn is_rsp_or_r12(&self) -> bool {
-        self.lower_part() == R64::RSP.lower_part()
-    }
-
-    fn is_rbp_or_r13(&self) -> bool {
-        self.lower_part() == R64::RBP.lower_part()
-    }
-}
-
-#[repr(u8)]
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
-struct REX(u8);
-
-impl REX {
-    fn encoding(self) -> u8 {
-        self.0
-    }
-
-    fn none() -> Self {
-        REX(0b01000000)
-    }
-
-    fn is_none(self) -> bool {
-        self == REX::none()
-    }
-
-    fn w() -> Self {
-        REX(REX::none().0 | (1 << 3))
-    }
-    fn r() -> Self {
-        REX(REX::none().0 | (1 << 2))
-    }
-    fn x() -> Self {
-        REX(REX::none().0 | (1 << 1))
-    }
-    fn b() -> Self {
-        REX(REX::none().0 | (1 << 0))
-    }
-
-    fn or(self, other: REX) -> Self {
-        REX(self.0 | other.0)
-    }
-
-    fn with_modrm(mut self, modrm: ModRM) -> Self {
-        if modrm.reg.is_extended_reg() {
-            self = self.or(REX::r());
-        }
-        if modrm.rm.is_extended() {
-            self = self.or(REX::b());
-        }
-        self
-    }
-
-    fn with_sib(mut self, sib: SIB) -> Self {
-        if sib.index.is_extended() {
-            self = self.or(REX::x());
-        }
-        if sib.base.is_extended() {
-            self = self.or(REX::b());
-        }
-        self
-    }
-
-    fn with_modrm_rm(mut self, rm: R64) -> Self {
-        if rm.is_extended() {
-            self = self.or(REX::b());
-        }
-        self
-    }
-
-    // Only emits when self is not NONE.
-    fn emit(&self, e: &mut Emit) {
-        if !self.is_none() {
-            e.write_byte(self.encoding())
-        }
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum Mod {
-    Indirect = 0,
-    Indirect8 = 1,
-    Indirect32 = 2,
-    Direct = 3,
-
-    // Indirect, with rm = bp: index * scale + disp32
-    IndirectBP = 4,
-}
-
-impl Mod {
-    fn encoding(self) -> u8 {
-        (self as u8) & 0x3
-    }
-}
-
-#[derive(Copy, Clone)]
-enum RegOrOpExt {
-    Reg(R64),
-    OpExt(u8),
-}
-
-impl RegOrOpExt {
-    fn lower_part(&self) -> u8 {
-        match self {
-            &RegOrOpExt::Reg(r) => r.lower_part(),
-            &RegOrOpExt::OpExt(o) => o,
-        }
-    }
-
-    fn is_extended_reg(&self) -> bool {
-        match self {
-            &RegOrOpExt::Reg(r) => r.is_extended(),
-            &RegOrOpExt::OpExt(_) => false,
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-struct ModRM {
-    mod_: Mod,
-    reg: RegOrOpExt,
-    rm: R64,
-}
-
-impl ModRM {
-    fn new(mod_: Mod, reg: RegOrOpExt, rm: R64) -> Self {
-        ModRM {
-            mod_: mod_,
-            reg: reg,
-            rm: rm,
-        }
-    }
-
-    fn direct(reg: R64, rm: R64) -> Self {
-        ModRM::new(Mod::Direct, RegOrOpExt::Reg(reg), rm)
-    }
-
-    fn direct_opext(opext: u8, rm: R64) -> Self {
-        ModRM::new(Mod::Direct, RegOrOpExt::OpExt(opext), rm)
-    }
-
-    fn encoding(&self) -> u8 {
-        ((self.mod_.encoding()) << 6) | (self.reg.lower_part() << 3) | self.rm.lower_part()
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-#[repr(u8)]
-pub enum Scale {
-    S1 = 0,
-    S2 = 1,
-    S4 = 2,
-    S8 = 3,
-}
-
-impl Scale {
-    fn from_u8(u: u8) -> Self {
-        use self::Scale::*;
-        match u {
-            1 => S1,
-            2 => S2,
-            4 => S4,
-            8 => S8,
-            _ => panic!("Not a valid scale: {}", u),
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-struct SIB {
-    scale: Scale,
-    index: R64,
-    base: R64,
-}
-
-impl SIB {
-    fn new(s: Scale, i: R64, b: R64) -> Self {
-        SIB {
-            scale: s,
-            index: i,
-            base: b,
-        }
-    }
-
-    fn new_b(b: R64) -> Self {
-        SIB::new(Scale::S1, R64::RSP, b)
-    }
-
-    fn new_si(s: Scale, i: R64) -> Self {
-        SIB::new(s, i, R64::RBP)
-    }
-
-    fn encoding(self) -> u8 {
-        ((self.scale as u8) << 6) | (self.index.lower_part() << 3) | self.base.lower_part()
-    }
-}
-
-// Memory operand.
-
-#[derive(Debug, Clone)]
-pub enum Addr {
-    B(R64),
-    IS(R64, Scale),
-    BIS(R64, R64, Scale),
-    BD(R64, i32),
-    BISD(R64, R64, Scale, i32),
-    // | rip-relative: disp32(%rip)
-    PcRel(i32),
-}
-
-impl Addr {
-    fn is_index_scale(&self) -> bool {
-        match self {
-            &Addr::IS(..) => true,
-            _ => false,
-        }
-    }
-
-    fn is_pc_relative(&self) -> bool {
-        match self {
-            &Addr::PcRel(..) => true,
-            _ => false,
-        }
-    }
-
-    fn base(&self) -> Option<R64> {
-        use self::Addr::*;
-
-        match self {
-            &B(r) |
-            &BIS(r, _, _) |
-            &BD(r, _) |
-            &BISD(r, _, _, _) => Some(r),
-            &IS(_, _) => None,
-            &PcRel(_) => Some(R64::RBP),
-        }
-    }
-
-    fn disp(&self) -> Option<i32> {
-        use self::Addr::*;
-
-        match self {
-            &B(_) |
-            &IS(_, _) |
-            &BIS(_, _, _) => None,
-            &BD(_, d) |
-            &BISD(_, _, _, d) |
-            &PcRel(d) => Some(d),
-        }
-    }
-}
-
 impl Add for R64 {
     type Output = Addr;
     fn add(self, rhs: R64) -> Self::Output {
@@ -308,11 +28,20 @@ impl Add<i32> for R64 {
     }
 }
 
+impl Add<i32> for Addr {
+    type Output = Addr;
+    fn add(self, rhs: i32) -> Self::Output {
+        match self {
+            B(r) => BD(r, rhs),
+            BIS(b, i, s) => BISD(b, i, s, rhs),
+            _ => panic!("{:?} + {:?} is not defined.", self, rhs),
+        }
+    }
+}
+
 impl Add<Addr> for R64 {
     type Output = Addr;
     fn add(self, rhs: Addr) -> Self::Output {
-        use self::Addr::*;
-
         if let IS(index, scale) = rhs {
             BIS(self, index, scale)
         } else {
@@ -364,7 +93,6 @@ fn emit_rm64_opext(buf: &mut Emit, rex: REX, opcode: u8, opext: u8, rm: R64) {
 
 // XXX: Refactor this.
 fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Addr) {
-    use self::Addr::*;
 
     let mut modrm;
     let mut mb_sib = None;
@@ -579,6 +307,20 @@ impl<'a> EmitBranch<&'a Addr> for Emit {
 
     fn call(&mut self, op: &Addr) -> &mut Self {
         emit_addr(self, REX::none(), 0xFF, RegOrOpExt::OpExt(2), op);
+        self
+    }
+}
+
+impl EmitJcc<i32> for Emit {
+    fn jcc(&mut self, cond: Cond, op: i32) -> &mut Self {
+        if is_imm8(op) {
+            self.write_byte(0x70 + (cond as u8));
+            self.write_byte(op as u8);
+        } else {
+            self.write_byte(0x0F);
+            self.write_byte(0x80 + (cond as u8));
+            self.write_i32(op);
+        }
         self
     }
 }
