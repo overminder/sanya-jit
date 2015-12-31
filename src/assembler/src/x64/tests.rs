@@ -836,6 +836,53 @@ fn test_jit_call() {
     assert_eq!(-1, res);
 }
 
+#[test]
+fn test_fibo() {
+    use mem::JitMem;
+
+    let mut emit = Emit(vec![]);
+
+    let fibo_start = 0;
+
+    // Fibo
+
+    emit.cmp(R64::RDI, 2)
+        .jl(0xff /* placeholder for imm32 */);
+
+    let patch_point_to_fibo_base = emit.inner_ref().len();
+
+    emit.push(R64::RDI)
+        .sub(R64::RDI, 1)
+        .call(0xff);
+
+    let label_fibo_func = emit.inner_ref().len();
+    emit.patch_i32(label_fibo_func - 4, -(label_fibo_func as i32));
+
+    emit.pop(R64::RDI)
+        .push(R64::RAX)
+        .sub(R64::RDI, 2)
+        .call(0xff);
+
+    let label_fibo_func = emit.inner_ref().len();
+    emit.patch_i32(label_fibo_func - 4, -(label_fibo_func as i32));
+
+    emit.pop(R64::RDI)
+        .add(R64::RAX, R64::RDI)
+        .ret();
+
+    let label_fibo_base = emit.inner_ref().len();
+    emit.patch_i32(patch_point_to_fibo_base - 4,
+                   (label_fibo_base - patch_point_to_fibo_base) as i32);
+
+    emit.mov(R64::RAX, R64::RDI);
+    emit.ret();
+
+    let jitmem = JitMem::new(emit.inner_ref());
+    println!("Start = 0x{:x}", unsafe { jitmem.start() });
+    let res = unsafe { jitmem.call_ptr_ptr(10) };
+    assert_eq!(55, res);
+}
+
 // Benchmarks.
 
 const ALLOC_SIZE: usize = 32000;

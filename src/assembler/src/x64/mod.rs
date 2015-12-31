@@ -311,6 +311,20 @@ impl<'a> EmitBranch<&'a Addr> for Emit {
     }
 }
 
+impl EmitBranch<i32> for Emit {
+    fn jmp(&mut self, op: i32) -> &mut Self {
+        self.write_byte(0xE9);
+        self.write_i32(op);
+        self
+    }
+
+    fn call(&mut self, op: i32) -> &mut Self {
+        self.write_byte(0xE8);
+        self.write_i32(op);
+        self
+    }
+}
+
 impl EmitJcc<i32> for Emit {
     fn jcc(&mut self, cond: Cond, op: i32) -> &mut Self {
         if is_imm8(op) {

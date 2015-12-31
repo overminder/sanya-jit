@@ -24,6 +24,10 @@ impl Emit {
         self.write_bytes(&buf);
     }
 
+    pub fn patch_i32(&mut self, ix: usize, value: i32) {
+        NativeEndian::write_i32(&mut self.0[ix..ix + 4], value);
+    }
+
     pub fn write_i64(&mut self, i: i64) {
         let mut buf = [0; 8];
         NativeEndian::write_i64(&mut buf, i);

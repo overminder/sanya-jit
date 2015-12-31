@@ -39,4 +39,8 @@ impl<'a> JitMem<'a> {
             transmute(self.inner_slice.as_ptr());
         as_fn(arg1, arg2, arg3, arg4, arg5, arg6)
     }
+
+    pub unsafe fn start(&self) -> usize {
+        transmute(self.inner_slice.as_ptr())
+    }
 }
