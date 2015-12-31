@@ -1,7 +1,12 @@
+/// Mostly from dart/runtime/vm/assembler_x64.cc
+/// And http://wiki.osdev.org/X86-64_Instruction_Encoding
+/// And http://www.felixcloutier.com/x86
+/// And pypy/rpython/jit/backend/x86/rx86.py
+
 pub mod traits;
-mod tests;
 pub mod encoding;
 mod consts;
+mod tests;
 
 pub use self::consts::*;
 pub use self::encoding::*;
@@ -9,11 +14,111 @@ use self::encoding::Addr::*;
 use self::traits::*;
 
 use std::ops::{Add, Mul};
+use byteorder::{ByteOrder, NativeEndian};
 
-/// Mostly from dart/runtime/vm/assembler_x64.cc
-/// And http://wiki.osdev.org/X86-64_Instruction_Encoding
-/// And http://www.felixcloutier.com/x86
-/// And pypy/rpython/jit/backend/x86/rx86.py
+pub struct Emit(Vec<u8>);
+
+impl Emit {
+    pub fn new(inner: Vec<u8>) -> Self {
+        Emit(inner)
+    }
+
+    pub fn write_byte(&mut self, b: u8) {
+        self.0.push(b)
+    }
+
+    pub fn write_bytes(&mut self, bs: &[u8]) {
+        // A simple loop suits well for instruction sequences (bs.len() < 8).
+        for b in bs {
+            self.0.push(*b);
+        }
+    }
+
+    pub fn write_i32(&mut self, i: i32) {
+        let mut buf = [0; 4];
+        NativeEndian::write_i32(&mut buf, i);
+        self.write_bytes(&buf);
+    }
+
+    pub fn here(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn patch_i32(&mut self, ix: usize, value: i32) {
+        NativeEndian::write_i32(&mut self.0[ix..ix + 4], value);
+    }
+
+    pub fn write_i64(&mut self, i: i64) {
+        let mut buf = [0; 8];
+        NativeEndian::write_i64(&mut buf, i);
+        self.write_bytes(&buf);
+    }
+
+    pub fn take(self) -> Vec<u8> {
+        self.0
+    }
+
+    pub fn inner_ref(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn bind(&mut self, label: &mut Label) -> &mut Self {
+        label.bind(self);
+        self
+    }
+}
+
+impl AsMut<Vec<u8>> for Emit {
+    fn as_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.0
+    }
+}
+
+// Labels
+
+#[derive(Debug)]
+pub enum Label {
+    Unbound {
+        patch_ixs: Vec<usize>,
+    },
+    Bound {
+        offset: usize,
+    },
+}
+
+impl Label {
+    pub fn bind(&mut self, emit: &mut Emit) {
+        *self = match self {
+            &mut Label::Unbound { ref mut patch_ixs } => {
+                let here = emit.inner_ref().len();
+                for patch_ix in patch_ixs.iter().cloned() {
+                    emit.patch_i32(patch_ix - 4, (here - patch_ix) as i32);
+                }
+                Label::Bound { offset: here }
+            }
+            &mut Label::Bound { .. } => {
+                panic!("Binding a bound label: {:?}", self);
+            }
+        };
+    }
+
+    fn patch_last_i32(&mut self, emit: &mut Emit) {
+        let here = emit.here();
+        match self {
+            &mut Label::Unbound { ref mut patch_ixs } => {
+                patch_ixs.push(here);
+            }
+            &mut Label::Bound { offset } => {
+                emit.patch_i32(here - 4, -((here - offset) as i32));
+            }
+        }
+    }
+
+    pub fn new() -> Self {
+        Label::Unbound { patch_ixs: vec![] }
+    }
+}
+
 impl Add for R64 {
     type Output = Addr;
     fn add(self, rhs: R64) -> Self::Output {
@@ -325,6 +430,20 @@ impl EmitBranch<i32> for Emit {
     }
 }
 
+impl<'a> EmitBranch<&'a mut Label> for Emit {
+    fn jmp(&mut self, op: &mut Label) -> &mut Self {
+        self.jmp(0xff_i32 /* any imm32 */);
+        op.patch_last_i32(self);
+        self
+    }
+
+    fn call(&mut self, op: &mut Label) -> &mut Self {
+        self.call(0xff_i32);
+        op.patch_last_i32(self);
+        self
+    }
+}
+
 impl EmitJcc<i32> for Emit {
     fn jcc(&mut self, cond: Cond, op: i32) -> &mut Self {
         if is_imm8(op) {
@@ -335,6 +454,14 @@ impl EmitJcc<i32> for Emit {
             self.write_byte(0x80 + (cond as u8));
             self.write_i32(op);
         }
+        self
+    }
+}
+
+impl<'a> EmitJcc<&'a mut Label> for Emit {
+    fn jcc(&mut self, cond: Cond, op: &mut Label) -> &mut Self {
+        self.jcc(cond, 0xff_i32 /* any imm32 */);
+        op.patch_last_i32(self);
         self
     }
 }

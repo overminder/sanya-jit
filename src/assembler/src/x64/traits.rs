@@ -2,47 +2,6 @@
 
 use super::consts::Cond;
 
-use byteorder::{ByteOrder, NativeEndian};
-
-pub struct Emit(pub Vec<u8>);
-
-impl Emit {
-    pub fn write_byte(&mut self, b: u8) {
-        self.0.push(b)
-    }
-
-    pub fn write_bytes(&mut self, bs: &[u8]) {
-        // A simple loop suits well for instruction sequences (bs.len() < 8).
-        for b in bs {
-            self.0.push(*b);
-        }
-    }
-
-    pub fn write_i32(&mut self, i: i32) {
-        let mut buf = [0; 4];
-        NativeEndian::write_i32(&mut buf, i);
-        self.write_bytes(&buf);
-    }
-
-    pub fn patch_i32(&mut self, ix: usize, value: i32) {
-        NativeEndian::write_i32(&mut self.0[ix..ix + 4], value);
-    }
-
-    pub fn write_i64(&mut self, i: i64) {
-        let mut buf = [0; 8];
-        NativeEndian::write_i64(&mut buf, i);
-        self.write_bytes(&buf);
-    }
-
-    pub fn take(self) -> Vec<u8> {
-        self.0
-    }
-
-    pub fn inner_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
 // Instructions.
 
 pub trait EmitPush<Op> {

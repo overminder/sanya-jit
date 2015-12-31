@@ -11,6 +11,7 @@ use super::traits::*;
 use test::Bencher;
 use super::Addr::*;
 use super::Scale::*;
+use mem::JitMem;
 
 // Test traits.
 
@@ -723,7 +724,7 @@ fn assert_encoding<F>(expected: &[u8], f: F)
     where F: for<'a> FnOnce(&'a mut Emit) -> &'a mut Emit
 {
     // Welp, I don't like this type signature...
-    let mut e = Emit(vec![]);
+    let mut e = Emit::new(vec![]);
     f(&mut e);
     assert_eq!(e.inner_ref(), expected);
 }
@@ -757,7 +758,7 @@ fn objdump_disas_lines(bs: &[u8]) -> Vec<String> {
 
 fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
     let instrs = A::possible_enumerations();
-    let mut code_buf = Emit(Vec::with_capacity(instrs.len()));
+    let mut code_buf = Emit::new(Vec::with_capacity(instrs.len()));
     for i in &instrs {
         i.emit(&mut code_buf);
     }
@@ -766,7 +767,7 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
     // line.len() > 20: filter out lines that are too short.
     for (disas_line, instr) in disas_lines.iter().filter(|line| line.len() > 20).zip(instrs) {
         let instr_att = instr.as_att_syntax();
-        let mut instr_buf = Emit(vec![]);
+        let mut instr_buf = Emit::new(vec![]);
         instr.emit(&mut instr_buf);
         if !disas_line.contains(&instr_att) {
             dump_file("/tmp/assembler.a.out", code_buf.inner_ref());
@@ -796,7 +797,7 @@ fn test_assembly_matches_disassembly() {
 #[test]
 fn test_jit_pushpop() {
     use mem::JitMem;
-    let mut emit = Emit(vec![]);
+    let mut emit = Emit::new(vec![]);
     emit.push(R64::RDI)
         .pop(R64::RAX)
         .ret();
@@ -809,7 +810,7 @@ fn test_jit_pushpop() {
 #[test]
 fn test_jit_add() {
     use mem::JitMem;
-    let mut emit = Emit(vec![]);
+    let mut emit = Emit::new(vec![]);
     emit.push(0_i32)
         .pop(R64::RAX)
         .add(R64::RAX, R64::R8)
@@ -823,7 +824,7 @@ fn test_jit_add() {
 #[test]
 fn test_jit_call() {
     use mem::JitMem;
-    let mut emit = Emit(vec![]);
+    let mut emit = Emit::new(vec![]);
     extern "C" fn neg(a: i64) -> i64 {
         -a
     }
@@ -836,47 +837,32 @@ fn test_jit_call() {
     assert_eq!(-1, res);
 }
 
-#[test]
-fn test_fibo() {
-    use mem::JitMem;
+fn make_fibo_code(emit: &mut Emit) {
+    let mut fibo_entry = Label::new();
+    let mut fibo_base_case = Label::new();
 
-    let mut emit = Emit(vec![]);
-
-    let fibo_start = 0;
-
-    // Fibo
-
-    emit.cmp(R64::RDI, 2)
-        .jl(0xff /* placeholder for imm32 */);
-
-    let patch_point_to_fibo_base = emit.inner_ref().len();
-
-    emit.push(R64::RDI)
+    emit.bind(&mut fibo_entry)
+        .cmp(R64::RDI, 2)
+        .jl(&mut fibo_base_case)
+        .push(R64::RDI)
         .sub(R64::RDI, 1)
-        .call(0xff);
-
-    let label_fibo_func = emit.inner_ref().len();
-    emit.patch_i32(label_fibo_func - 4, -(label_fibo_func as i32));
-
-    emit.pop(R64::RDI)
+        .call(&mut fibo_entry)
+        .pop(R64::RDI)
         .push(R64::RAX)
         .sub(R64::RDI, 2)
-        .call(0xff);
-
-    let label_fibo_func = emit.inner_ref().len();
-    emit.patch_i32(label_fibo_func - 4, -(label_fibo_func as i32));
-
-    emit.pop(R64::RDI)
+        .call(&mut fibo_entry)
+        .pop(R64::RDI)
         .add(R64::RAX, R64::RDI)
+        .ret()
+        .bind(&mut fibo_base_case)
+        .mov(R64::RAX, R64::RDI)
         .ret();
+}
 
-    let label_fibo_base = emit.inner_ref().len();
-    emit.patch_i32(patch_point_to_fibo_base - 4,
-                   (label_fibo_base - patch_point_to_fibo_base) as i32);
-
-    emit.mov(R64::RAX, R64::RDI);
-    emit.ret();
-
+#[test]
+fn test_fibo() {
+    let mut emit = Emit::new(vec![]);
+    make_fibo_code(&mut emit);
     let jitmem = JitMem::new(emit.inner_ref());
     println!("Start = 0x{:x}", unsafe { jitmem.start() });
     let res = unsafe { jitmem.call_ptr_ptr(10) };
@@ -890,52 +876,83 @@ const ALLOC_SIZE: usize = 32000;
 #[bench]
 fn bench_emit_add(b: &mut Bencher) {
     b.iter(|| {
-        let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
+        let mut emit = Emit::new(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE / 3) {
             emit.add(R64::R8, R64::R9);
         }
+        emit
     });
 }
 
 #[bench]
 fn bench_emit_ret(b: &mut Bencher) {
     b.iter(|| {
-        let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
+        let mut emit = Emit::new(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..ALLOC_SIZE {
             emit.ret();
         }
+        emit
     });
 }
 
 #[bench]
 fn bench_emit_push(b: &mut Bencher) {
     b.iter(|| {
-        let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
+        let mut emit = Emit::new(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE * 2 / 3) {
             emit.push(R64::R8);
         }
+        emit
     });
 }
 
 #[bench]
 fn bench_emit_push_i32(b: &mut Bencher) {
     b.iter(|| {
-        let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
+        let mut emit = Emit::new(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE / 5) {
             emit.push(-1_i32);
         }
+        emit
     });
 }
 
 #[bench]
 fn bench_emit_push_rm64(b: &mut Bencher) {
     b.iter(|| {
-        let mut emit = Emit(Vec::with_capacity(ALLOC_SIZE));
+        let mut emit = Emit::new(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE / 8) {
             emit.push(&Addr::B(R64::R12));
             emit.push(&Addr::B(R64::R13));
         }
+        emit
     });
+}
+
+#[bench]
+fn bench_emit_fibo(b: &mut Bencher) {
+    let fibo_len = {
+        let mut emit = Emit::new(vec![]);
+        make_fibo_code(&mut emit);
+        emit.inner_ref().len()
+    };
+    b.iter(|| {
+        let mut emit = Emit::new(Vec::with_capacity(ALLOC_SIZE));
+        for _ in 0..(ALLOC_SIZE / fibo_len) {
+            make_fibo_code(&mut emit);
+        }
+        emit
+    });
+}
+
+#[bench]
+fn bench_exec_fibo(b: &mut Bencher) {
+    let fibo = {
+        let mut emit = Emit::new(vec![]);
+        make_fibo_code(&mut emit);
+        JitMem::new(emit.inner_ref())
+    };
+    b.iter(|| unsafe { fibo.call_ptr_ptr(30) });
 }
 
 #[bench]
@@ -945,5 +962,6 @@ fn bench_emit_raw_vec(b: &mut Bencher) {
         for _ in 0..ALLOC_SIZE {
             v.push(0xff);
         }
+        v
     });
 }
