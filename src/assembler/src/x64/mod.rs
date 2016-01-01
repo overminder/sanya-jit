@@ -94,12 +94,28 @@ pub enum Label {
     },
 }
 
+#[allow(unused)]
+fn emit_nop_until_aligned(emit: &mut Emit, alignment: usize) -> usize {
+    let here = emit.here();
+    let mask = alignment - 1;
+    if (here & mask) != 0 {
+        let nops = alignment - (here & mask);
+        for _ in 0..nops {
+            emit.nop();
+        }
+        nops
+    }
+    else {
+        0
+    }
+}
+
 impl Label {
     pub fn bind(&mut self, emit: &mut Emit) {
         *self = match self {
             &mut Label::Unbound { ref mut patch_ixs } => {
-                let here = emit.as_ref().len();
-                for patch_ix in patch_ixs.iter().cloned() {
+                let here = emit.here();
+                for patch_ix in patch_ixs.drain(..) {
                     emit.patch_i32(patch_ix - 4, (here - patch_ix) as i32);
                 }
                 Label::Bound { offset: here }
@@ -124,6 +140,27 @@ impl Label {
 
     pub fn new() -> Self {
         Label::Unbound { patch_ixs: vec![] }
+    }
+}
+
+// Safety check against not binding labels.
+#[cfg(debug_assertions)]
+impl Drop for Label {
+    fn drop(&mut self) {
+        use std::mem::swap;
+
+        match self {
+            &mut Label::Unbound { ref mut patch_ixs } => {
+                if patch_ixs.len() > 0 {
+                    // Clear the label before panicking, since the label
+                    // will be dropped again.
+                    let mut ixs_copy = vec![];
+                    swap(&mut ixs_copy, patch_ixs);
+                    panic!("Unbound label {:?} went out of scope.", ixs_copy);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -477,6 +514,13 @@ impl<'a> EmitJcc<&'a mut Label> for Emit {
 impl EmitRet for Emit {
     fn ret(&mut self) -> &mut Self {
         self.write_byte(0xC3);
+        self
+    }
+}
+
+impl EmitNop for Emit {
+    fn nop(&mut self) -> &mut Self {
+        self.write_byte(0x90);
         self
     }
 }

@@ -31,6 +31,7 @@ fn main() {
     let mut emit = Emit::new();
     make_fibo_code(&mut emit);
     let jitmem = JitMem::new(emit.as_ref());
+    println!("fibo = 0x{:x}", unsafe { jitmem.start() });
     println!("fibo(40) = {}", unsafe { jitmem.call_ptr_ptr(40) });
 }
 

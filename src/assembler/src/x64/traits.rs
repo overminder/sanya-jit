@@ -64,3 +64,8 @@ pub trait EmitJcc<Op> {
 pub trait EmitRet {
     fn ret(&mut self) -> &mut Self;
 }
+
+pub trait EmitNop {
+    fn nop(&mut self) -> &mut Self;
+}
+

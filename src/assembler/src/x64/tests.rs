@@ -837,6 +837,14 @@ fn test_jit_call() {
     assert_eq!(-1, res);
 }
 
+#[test]
+#[should_panic]
+fn test_unbound_label_drop() {
+    let mut emit = Emit::new();
+    let mut label = Label::new();
+    emit.call(&mut label);
+}
+
 fn make_fibo_code(emit: &mut Emit) {
     let mut fibo_entry = Label::new();
     let mut fibo_base_case = Label::new();
