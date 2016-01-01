@@ -4,9 +4,11 @@
 use std::boxed::Box;
 use std::slice;
 use std::ptr;
+use std::ffi::CStr;
 use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
-use std::mem::transmute;
+use std::mem::{size_of, transmute};
+use std::fmt::{self, Formatter, Debug};
 
 pub type Oop = usize;
 
@@ -24,13 +26,31 @@ pub struct InfoTable<A> {
     callable: u8,
     has_vararg: u8,
     name: *const u8,
-    phantom_data: PhantomData<A>,
     entry: [u8; 0],
+    phantom_data: PhantomData<A>,
+}
+
+impl<A> Debug for InfoTable<A> {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
+        unsafe { write!(fmt, "<InfoTable {}>", self.name()) }
+    }
 }
 
 impl<A> InfoTable<A> {
     pub fn sizeof_instance(&self) -> usize {
         sizeof_ptrs(self.ptr_payloads as usize + self.word_payloads as usize + 1)
+    }
+
+    pub fn name(&self) -> &'static str {
+        unsafe { CStr::from_ptr(self.name as *const _).to_str().unwrap() }
+    }
+
+    pub unsafe fn from_entry<'a>(entry: usize) -> &'a Self {
+        &*((entry - size_of::<Self>()) as *const _)
+    }
+
+    pub fn entry_word(&self) -> usize {
+        self.entry.as_ptr() as usize
     }
 }
 
@@ -60,7 +80,9 @@ pub fn infotable_for_fixnum() -> InfoTable<Fixnum> {
 /// Yes, we are using Haskell's nomenclature here.
 #[repr(C)]
 pub struct Closure {
-    info: *const InfoTable<Closure>,
+    // *info points directly to the entry field in the InfoTable.
+    // See Haskell's `tables-next-to-code` trick.
+    info: *const (),
     payloads: [Oop; 0],
 }
 
@@ -70,10 +92,10 @@ impl Closure {
     }
 
     pub unsafe fn info(&self) -> &InfoTable<Self> {
-        &*self.info
+        InfoTable::<Self>::from_entry(*self.entry_word())
     }
 
-    pub unsafe fn info_word(&self) -> &mut usize {
+    pub unsafe fn entry_word(&self) -> &mut usize {
         &mut *(&self.info as *const _ as *mut _)
     }
 
@@ -104,13 +126,13 @@ impl Closure {
 
 #[repr(C)]
 pub struct Fixnum {
-    info: *const InfoTable<Fixnum>,
+    info: *const (),
     pub value: isize,
 }
 
 #[repr(C)]
 pub struct Pair {
-    info: *const InfoTable<Fixnum>,
+    info: *const (),
     pub car: Oop,
     pub cdr: Oop,
 }
@@ -275,6 +297,15 @@ mod tests {
                 assert_eq!(3, block.len());
             }
             assert_eq!(0, block.len());
+        }
+    }
+
+    #[test]
+    fn test_info_offsets() {
+        unsafe {
+            let info = infotable_for_pair();
+            let entry = info.entry_word();
+            assert_eq!(InfoTable::<Pair>::from_entry(entry).entry_word(), entry);
         }
     }
 }

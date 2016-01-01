@@ -7,7 +7,7 @@ use std::mem::{swap, transmute};
 
 pub const INFO_TAG_MASK: usize = 0x7;
 pub const INFO_UNTAG_MASK: usize = !INFO_TAG_MASK;
-pub const INFO_SCAVANGED_TAG: usize = 1;
+pub const INFO_SCAVENGED_TAG: usize = 1;
 
 pub struct GcState {
     _heap: Vec<u8>,
@@ -16,17 +16,17 @@ pub struct GcState {
     to_space: *mut u8,
 
     // Used during execution
-    alloc_ptr: *mut u8,
-    alloc_limit: *mut u8,
+    pub alloc_ptr: *mut u8,
+    pub alloc_limit: *mut u8,
 
     // Used during scavaging.
     copy_ptr: *mut u8,
 }
 
-unsafe fn was_scavanged_to(oop: &Closure) -> Option<Oop> {
-    let info_word = *oop.info_word();
-    if (info_word & INFO_TAG_MASK) == INFO_SCAVANGED_TAG {
-        Some(info_word & INFO_UNTAG_MASK)
+unsafe fn was_scavenged_to(oop: &Closure) -> Option<Oop> {
+    let entry_word = *oop.entry_word();
+    if (entry_word & INFO_TAG_MASK) == INFO_SCAVENGED_TAG {
+        Some(entry_word & INFO_UNTAG_MASK)
     } else {
         None
     }
@@ -58,34 +58,37 @@ impl GcState {
         copied_to
     }
 
-    pub unsafe fn scavange(&mut self, oop: &mut Oop) {
+    pub unsafe fn scavenge(&mut self, oop: &mut Oop) {
         if *oop == NULL_OOP {
             return;
         }
 
         let closure = Closure::from_raw(*oop);
-        if let Some(ptr) = was_scavanged_to(closure) {
+        if let Some(ptr) = was_scavenged_to(closure) {
             *oop = ptr;
             return;
         }
 
         let copied_to = self.copy(closure);
-        println!("Scavange: {:x} -> {:x}", closure as *const _ as usize, copied_to as *const _ as usize);
+        // println!("Scavenge: {:x} -> {:x}",
+        // closure as *const _ as usize,
+        // copied_to as *const _ as usize);
+        //
         // Tag the old object with a redirection to the copied one.
-        *closure.info_word() = copied_to.as_word() + INFO_SCAVANGED_TAG;
+        *closure.entry_word() = copied_to.as_word() + INFO_SCAVENGED_TAG;
         // And mutate the location.
         *oop = copied_to.as_oop();
 
         for ptr in copied_to.ptr_payloads() {
-            self.scavange(ptr);
+            self.scavenge(ptr);
         }
     }
 
     pub unsafe fn prepare_collection(&mut self, handle_block: &HandleBlock) {
         self.copy_ptr = self.to_space;
 
-        // Scavange managed handles.
-        handle_block.head().foreach_oop(|oop| self.scavange(oop));
+        // Scavenge managed handles.
+        handle_block.head().foreach_oop(|oop| self.scavenge(oop));
     }
 
     pub unsafe fn finish_collection(&mut self) {
@@ -94,8 +97,10 @@ impl GcState {
         self.alloc_limit = self.alloc_ptr.offset(self.space_size as isize);
     }
 
-    pub unsafe fn try_alloc<A: IsOop>(&mut self, info: &InfoTable<A>, handle_block: &HandleBlock)
-        -> Option<Box<Handle<A>>> {
+    pub unsafe fn try_alloc<A: IsOop>(&mut self,
+                                      info: &InfoTable<A>,
+                                      handle_block: &HandleBlock)
+                                      -> Option<Box<Handle<A>>> {
         let ptr = self.alloc_ptr;
         let size = info.sizeof_instance();
         let advanced_to = self.alloc_ptr.offset(size as isize);
@@ -105,9 +110,13 @@ impl GcState {
         } else {
             self.alloc_ptr = advanced_to;
             let oop = Closure::from_raw(ptr as usize);
-            *oop.info_word() = transmute(info);
+            *oop.entry_word() = info.entry_word();
             Some(handle_block.new_handle(transmute(oop)))
         }
+    }
+
+    pub fn available_spaces(&self) -> usize {
+        (self.alloc_limit as usize) - (self.alloc_ptr as usize)
     }
 }
 
