@@ -143,7 +143,7 @@ impl Label {
     }
 }
 
-// Safety check against not binding labels.
+// Safety check against using labels without binding them.
 #[cfg(debug_assertions)]
 impl Drop for Label {
     fn drop(&mut self) {
@@ -153,7 +153,7 @@ impl Drop for Label {
             &mut Label::Unbound { ref mut patch_ixs } => {
                 if patch_ixs.len() > 0 {
                     // Clear the label before panicking, since the label
-                    // will be dropped again.
+                    // will be dropped again in the panic handler (huh?).
                     let mut ixs_copy = vec![];
                     swap(&mut ixs_copy, patch_ixs);
                     panic!("Unbound label {:?} went out of scope.", ixs_copy);
@@ -241,7 +241,7 @@ fn emit_rm64_opext(buf: &mut Emit, rex: REX, opcode: u8, opext: u8, rm: R64) {
     buf.write_byte(modrm.encoding());
 }
 
-// XXX: Refactor this.
+// XXX: Refactor this. It's a mess and it's too slow.
 fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Addr) {
 
     let mut modrm;

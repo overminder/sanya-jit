@@ -4,7 +4,9 @@
 use std::boxed::Box;
 use std::slice;
 use std::ptr;
+use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
+use std::mem::transmute;
 
 pub type Oop = usize;
 
@@ -21,6 +23,35 @@ pub struct InfoTable {
     entry: [u8; 0],
 }
 
+impl InfoTable {
+    pub fn sizeof_instance(&self) -> usize {
+        8 * (self.ptr_payloads as usize + self.word_payloads as usize + 1)
+    }
+
+    fn mk_data(nptrs: u16, nwords: u16, name: &'static str) -> Self {
+        InfoTable {
+            ptr_payloads: nptrs,
+            word_payloads: nwords,
+            arity: 0,
+            callable: 0,
+            has_vararg: 0,
+            name: name.as_ptr(),
+            entry: [],
+        }
+    }
+
+    pub fn of_pair() -> Self {
+        InfoTable::mk_data(2, 0, "<Pair>")
+    }
+
+    pub fn of_fixnum() -> Self {
+        InfoTable::mk_data(0, 1, "<Fixnum>")
+    }
+}
+
+/// A Closure is not exactly an ordinary callable object in the narrow sense -
+/// it's a generic heap object, with a info table and some payloads (fields).
+/// Yes, we are using Haskell's nomenclature here.
 #[repr(C)]
 pub struct Closure {
     info: *const InfoTable,
@@ -28,6 +59,10 @@ pub struct Closure {
 }
 
 impl Closure {
+    pub unsafe fn from_raw<'a>(oop: Oop) -> &'a mut Self {
+        &mut *transmute::<Oop, *mut Self>(oop)
+    }
+
     pub unsafe fn ptr_payloads(&self) -> &mut [Oop] {
         let base = self.payloads.as_ptr() as *mut _;
         let len = self.info().ptr_payloads as usize;
@@ -38,11 +73,19 @@ impl Closure {
         &*self.info
     }
 
+    pub unsafe fn info_word(&self) -> &mut usize {
+        &mut *(&self.info as *const _ as *mut _)
+    }
+
     pub unsafe fn word_payloads(&self) -> &mut [usize] {
         let base = (self.payloads.as_ptr() as *const _ as *mut usize)
                        .offset(self.info().ptr_payloads as isize);
         let len = self.info().word_payloads as usize;
         slice::from_raw_parts_mut(base, len)
+    }
+
+    pub unsafe fn as_word(&self) -> usize {
+        transmute(self)
     }
 
     pub unsafe fn entry(&self) -> *const () {
@@ -51,16 +94,16 @@ impl Closure {
 }
 
 #[repr(C)]
-pub struct Int {
+pub struct Fixnum {
     info: *const InfoTable,
-    value: isize,
+    pub value: isize,
 }
 
 #[repr(C)]
 pub struct Pair {
     info: *const InfoTable,
-    car: Oop,
-    cdr: Oop,
+    pub car: Oop,
+    pub cdr: Oop,
 }
 
 // Doubly-linked list of oops. Used to manage root of stacks.
@@ -77,9 +120,14 @@ pub type OopHandle = Handle<Oop>;
 pub struct HandleBlock(OopHandle);
 
 // Just a marker.
-pub trait IsOop {}
+pub trait IsOop : Sized {
+    fn as_oop(&self) -> Oop {
+        unsafe { transmute(self) }
+    }
+}
+
 impl IsOop for Closure {}
-impl IsOop for Int {}
+impl IsOop for Fixnum {}
 impl IsOop for Pair {}
 
 impl HandleBlock {
@@ -102,7 +150,7 @@ impl HandleBlock {
     pub fn len(&self) -> usize {
         unsafe {
             let mut res = 0;
-            self.head().foreach(|_| res += 1);
+            self.head().foreach_oop(|_| res += 1);
             res
         }
     }
@@ -122,35 +170,35 @@ impl<A> Handle<A> {
         &mut *(&self.oop as *const _ as *mut _)
     }
 
-    pub unsafe fn same_ptr(&self, rhs: &OopHandle) -> bool {
+    unsafe fn same_ptr(&self, rhs: &OopHandle) -> bool {
         self.as_ptr() == rhs.as_ptr()
     }
 
-    pub unsafe fn foreach<F: FnMut(&OopHandle)>(&self, mut f: F) {
+    pub unsafe fn foreach_oop<F: FnMut(&mut Oop)>(&self, mut f: F) {
         let mut curr = self.next();
         loop {
             if self.same_ptr(curr) {
                 break;
             }
             let next = curr.next();
-            f(curr);
+            f(curr.oop());
             curr = next;
         }
     }
 
-    pub unsafe fn next<'a, 'b>(&'a self) -> &'b mut OopHandle {
+    unsafe fn next<'a, 'b>(&'a self) -> &'b mut OopHandle {
         &mut *self.next
     }
 
-    pub unsafe fn set_next(&self, next: *mut OopHandle) {
+    unsafe fn set_next(&self, next: *mut OopHandle) {
         (&mut *(self as *const _ as *mut Self)).next = next;
     }
 
-    pub unsafe fn prev(&self) -> &mut OopHandle {
+    unsafe fn prev(&self) -> &mut OopHandle {
         &mut *self.prev
     }
 
-    pub fn as_ptr(&self) -> *mut OopHandle {
+    fn as_ptr(&self) -> *mut OopHandle {
         self as *const _ as *const _ as *mut _
     }
 
@@ -161,7 +209,7 @@ impl<A> Handle<A> {
             next: head.next,
             phantom_data: PhantomData,
         });
-        head.next().prev = thiz.as_ptr();
+        head.next().prev = Handle::<A>::as_ptr(&*thiz);
         (*head).set_next(thiz.as_ptr());
         thiz
     }
@@ -180,6 +228,19 @@ impl<A> Drop for Handle<A> {
     }
 }
 
+impl<A> Deref for Handle<A> {
+    type Target = A;
+    fn deref(&self) -> &A {
+        unsafe { &*(self.oop as *const A) }
+    }
+}
+
+impl<A> DerefMut for Handle<A> {
+    fn deref_mut(&mut self) -> &mut A {
+        unsafe { &mut *(self.oop as *mut A) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,11 +251,13 @@ mod tests {
         unsafe {
             let block = HandleBlock::new();
             {
-                let oop = mem::zeroed::<Int>();
+                let mut oop = mem::zeroed::<Fixnum>();
+                oop.value = 42;
                 let foo1 = block.new_ref_handle(&oop);
                 let _foo2 = block.new_ref_handle(&oop);
                 let _foo3 = block.new_ref_handle(&oop);
                 assert_eq!(&oop as *const _ as Oop, *foo1.oop());
+                assert_eq!(oop.value, foo1.value);
                 assert_eq!(3, block.len());
             }
             assert_eq!(0, block.len());
