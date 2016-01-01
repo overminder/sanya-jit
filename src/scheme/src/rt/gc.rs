@@ -19,8 +19,12 @@ pub struct GcState {
     pub alloc_ptr: *mut u8,
     pub alloc_limit: *mut u8,
 
-    // Used during scavaging.
+    // Used during scavenging.
     copy_ptr: *mut u8,
+
+    // Statistics.
+    pub full_gc_count: usize,
+    pub scavenged_count: usize,
 }
 
 unsafe fn was_scavenged_to(oop: &Closure) -> Option<Oop> {
@@ -47,6 +51,9 @@ impl GcState {
             alloc_limit: to_space,
 
             copy_ptr: ptr::null_mut(),
+
+            full_gc_count: 0,
+            scavenged_count: 0,
         }
     }
 
@@ -70,6 +77,7 @@ impl GcState {
         }
 
         let copied_to = self.copy(closure);
+        self.scavenged_count += 1;
         // println!("Scavenge: {:x} -> {:x}",
         // closure as *const _ as usize,
         // copied_to as *const _ as usize);
@@ -94,24 +102,44 @@ impl GcState {
     pub unsafe fn finish_collection(&mut self) {
         swap(&mut self.to_space, &mut self.from_space);
         self.alloc_ptr = self.copy_ptr;
-        self.alloc_limit = self.alloc_ptr.offset(self.space_size as isize);
+        self.alloc_limit = self.from_space.offset(self.space_size as isize);
+        self.full_gc_count += 1;
     }
 
     pub unsafe fn try_alloc<A: IsOop>(&mut self,
                                       info: &InfoTable<A>,
                                       handle_block: &HandleBlock)
-                                      -> Option<Box<Handle<A>>> {
+                                      -> Option<Handle<A>> {
         let ptr = self.alloc_ptr;
         let size = info.sizeof_instance();
         let advanced_to = self.alloc_ptr.offset(size as isize);
         // Overflow? Should really happen here...
-        if advanced_to >= self.alloc_limit {
+        if advanced_to > self.alloc_limit {
             None
         } else {
             self.alloc_ptr = advanced_to;
             let oop = Closure::from_raw(ptr as usize);
             *oop.entry_word() = info.entry_word();
-            Some(handle_block.new_handle(transmute(oop)))
+            Some(handle_block.new_ref_handle(oop.oop_cast()))
+        }
+    }
+
+    pub unsafe fn alloc<A: IsOop>(&mut self,
+                                  info: &InfoTable<A>,
+                                  handle_block: &HandleBlock)
+                                  -> Handle<A> {
+        if let Some(h) = self.try_alloc(info, handle_block) {
+            h
+        } else {
+            let size = info.sizeof_instance();
+            self.prepare_collection(handle_block);
+            // Assumes no other root exists.
+            self.finish_collection();
+            if self.available_spaces() < size {
+                panic!("GcState: failed to alloc {} bytes for {:?}", size, info);
+            } else {
+                self.try_alloc(info, handle_block).unwrap()
+            }
         }
     }
 

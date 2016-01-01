@@ -87,6 +87,10 @@ pub struct Closure {
 }
 
 impl Closure {
+    pub unsafe fn info_is<A>(&self, info: &InfoTable<A>) -> bool {
+        *self.entry_word() == info.entry_word()
+    }
+
     pub unsafe fn from_raw<'a>(oop: Oop) -> &'a mut Self {
         &mut *transmute::<Oop, *mut Self>(oop)
     }
@@ -118,10 +122,6 @@ impl Closure {
     pub unsafe fn as_word(&self) -> usize {
         transmute(self)
     }
-
-    pub unsafe fn entry(&self) -> *const () {
-        self.info().entry.as_ptr() as *const _
-    }
 }
 
 #[repr(C)]
@@ -139,21 +139,27 @@ pub struct Pair {
 
 // Doubly-linked list of oops. Used to manage root of stacks.
 
-pub struct Handle<A> {
+pub struct RawHandle<A> {
     oop: Oop,
     prev: *mut OopHandle,
     next: *mut OopHandle,
     phantom_data: PhantomData<A>,
 }
 
-pub type OopHandle = Handle<Oop>;
+pub type OopHandle = RawHandle<Oop>;
+
+pub type Handle<A> = Box<RawHandle<A>>;
 
 pub struct HandleBlock(OopHandle);
 
 // Just a marker.
 pub trait IsOop : Sized {
-    fn as_oop(&self) -> Oop {
-        unsafe { transmute(self) }
+    unsafe fn as_oop(&self) -> Oop {
+        transmute(self)
+    }
+
+    unsafe fn oop_cast<A: IsOop>(&self) -> &A {
+        transmute(self)
     }
 }
 
@@ -163,7 +169,7 @@ impl IsOop for Pair {}
 
 impl HandleBlock {
     pub fn new() -> Box<HandleBlock> {
-        let mut thiz = Box::new(HandleBlock(Handle {
+        let mut thiz = Box::new(HandleBlock(RawHandle {
             oop: NULL_OOP,
             prev: ptr::null_mut(),
             next: ptr::null_mut(),
@@ -186,17 +192,17 @@ impl HandleBlock {
         }
     }
 
-    pub fn new_handle<A: IsOop>(&self, a: *mut A) -> Box<Handle<A>> {
-        unsafe { Handle::new(a, self.head()) }
+    pub fn new_handle<A: IsOop>(&self, a: *mut A) -> Box<RawHandle<A>> {
+        unsafe { RawHandle::new(a, self.head()) }
     }
 
-    pub fn new_ref_handle<A: IsOop>(&self, a: &A) -> Box<Handle<A>> {
-        unsafe { Handle::new_ref(a, &self.0) }
+    pub fn new_ref_handle<A: IsOop>(&self, a: &A) -> Box<RawHandle<A>> {
+        unsafe { RawHandle::new_ref(a, &self.0) }
     }
 }
 
 
-impl<A> Handle<A> {
+impl<A> RawHandle<A> {
     pub unsafe fn oop(&self) -> &mut Oop {
         &mut *(&self.oop as *const _ as *mut _)
     }
@@ -239,23 +245,23 @@ impl<A> Handle<A> {
     }
 
     unsafe fn new(oop: *mut A, head: &OopHandle) -> Box<Self> {
-        let thiz = Box::new(Handle {
+        let thiz = Box::new(RawHandle {
             oop: oop as Oop,
             prev: head.prev,
             next: head.as_ptr(),
             phantom_data: PhantomData,
         });
-        head.prev().next = Handle::<A>::as_ptr(&*thiz);
+        head.prev().next = RawHandle::<A>::as_ptr(&*thiz);
         (*head).set_prev(thiz.as_ptr());
         thiz
     }
 
     unsafe fn new_ref(oop_ref: &A, head: &OopHandle) -> Box<Self> {
-        Handle::new(oop_ref as *const _ as *mut A, head)
+        RawHandle::new(oop_ref as *const _ as *mut A, head)
     }
 }
 
-impl<A> Drop for Handle<A> {
+impl<A> Drop for RawHandle<A> {
     fn drop(&mut self) {
         unsafe {
             self.next().prev = self.prev().as_ptr();
@@ -264,14 +270,14 @@ impl<A> Drop for Handle<A> {
     }
 }
 
-impl<A> Deref for Handle<A> {
+impl<A> Deref for RawHandle<A> {
     type Target = A;
     fn deref(&self) -> &A {
         unsafe { &*(self.oop as *const A) }
     }
 }
 
-impl<A> DerefMut for Handle<A> {
+impl<A> DerefMut for RawHandle<A> {
     fn deref_mut(&mut self) -> &mut A {
         unsafe { &mut *(self.oop as *mut A) }
     }
