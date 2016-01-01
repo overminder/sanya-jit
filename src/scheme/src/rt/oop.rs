@@ -12,41 +12,47 @@ pub type Oop = usize;
 
 pub const NULL_OOP: Oop = 0;
 
+pub fn sizeof_ptrs(nptrs: usize) -> usize {
+    nptrs * 8
+}
+
 #[repr(C)]
-pub struct InfoTable {
+pub struct InfoTable<A> {
     ptr_payloads: u16, // GC ptrs
     word_payloads: u16, // Unmanaged qwords
     arity: u16,
     callable: u8,
     has_vararg: u8,
     name: *const u8,
+    phantom_data: PhantomData<A>,
     entry: [u8; 0],
 }
 
-impl InfoTable {
+impl<A> InfoTable<A> {
     pub fn sizeof_instance(&self) -> usize {
-        8 * (self.ptr_payloads as usize + self.word_payloads as usize + 1)
+        sizeof_ptrs(self.ptr_payloads as usize + self.word_payloads as usize + 1)
     }
+}
 
-    fn mk_data(nptrs: u16, nwords: u16, name: &'static str) -> Self {
-        InfoTable {
-            ptr_payloads: nptrs,
-            word_payloads: nwords,
-            arity: 0,
-            callable: 0,
-            has_vararg: 0,
-            name: name.as_ptr(),
-            entry: [],
-        }
+fn mk_infotable_for_data<A>(nptrs: u16, nwords: u16, name: &'static str) -> InfoTable<A> {
+    InfoTable {
+        ptr_payloads: nptrs,
+        word_payloads: nwords,
+        arity: 0,
+        callable: 0,
+        has_vararg: 0,
+        name: name.as_ptr(),
+        phantom_data: PhantomData,
+        entry: [],
     }
+}
 
-    pub fn of_pair() -> Self {
-        InfoTable::mk_data(2, 0, "<Pair>")
-    }
+pub fn infotable_for_pair() -> InfoTable<Pair> {
+    mk_infotable_for_data(2, 0, "<Pair>")
+}
 
-    pub fn of_fixnum() -> Self {
-        InfoTable::mk_data(0, 1, "<Fixnum>")
-    }
+pub fn infotable_for_fixnum() -> InfoTable<Fixnum> {
+    mk_infotable_for_data(0, 1, "<Fixnum>")
 }
 
 /// A Closure is not exactly an ordinary callable object in the narrow sense -
@@ -54,7 +60,7 @@ impl InfoTable {
 /// Yes, we are using Haskell's nomenclature here.
 #[repr(C)]
 pub struct Closure {
-    info: *const InfoTable,
+    info: *const InfoTable<Closure>,
     payloads: [Oop; 0],
 }
 
@@ -63,13 +69,7 @@ impl Closure {
         &mut *transmute::<Oop, *mut Self>(oop)
     }
 
-    pub unsafe fn ptr_payloads(&self) -> &mut [Oop] {
-        let base = self.payloads.as_ptr() as *mut _;
-        let len = self.info().ptr_payloads as usize;
-        slice::from_raw_parts_mut(base, len)
-    }
-
-    pub unsafe fn info(&self) -> &InfoTable {
+    pub unsafe fn info(&self) -> &InfoTable<Self> {
         &*self.info
     }
 
@@ -77,11 +77,20 @@ impl Closure {
         &mut *(&self.info as *const _ as *mut _)
     }
 
-    pub unsafe fn word_payloads(&self) -> &mut [usize] {
-        let base = (self.payloads.as_ptr() as *const _ as *mut usize)
-                       .offset(self.info().ptr_payloads as isize);
-        let len = self.info().word_payloads as usize;
+    pub unsafe fn payload_start(&self) -> usize {
+        self.payloads.as_ptr() as usize
+    }
+
+    pub unsafe fn ptr_payloads(&self) -> &mut [Oop] {
+        let base = self.payload_start() as *mut _;
+        let len = self.info().ptr_payloads as usize;
         slice::from_raw_parts_mut(base, len)
+    }
+
+    pub unsafe fn word_payloads(&self) -> &mut [usize] {
+        let base = self.payload_start() + sizeof_ptrs(self.info().ptr_payloads as usize);
+        let len = self.info().word_payloads as usize;
+        slice::from_raw_parts_mut(base as *mut _, len)
     }
 
     pub unsafe fn as_word(&self) -> usize {
@@ -95,13 +104,13 @@ impl Closure {
 
 #[repr(C)]
 pub struct Fixnum {
-    info: *const InfoTable,
+    info: *const InfoTable<Fixnum>,
     pub value: isize,
 }
 
 #[repr(C)]
 pub struct Pair {
-    info: *const InfoTable,
+    info: *const InfoTable<Fixnum>,
     pub car: Oop,
     pub cdr: Oop,
 }
@@ -143,7 +152,7 @@ impl HandleBlock {
         thiz
     }
 
-    fn head(&self) -> &OopHandle {
+    pub fn head(&self) -> &OopHandle {
         &(*self).0
     }
 
@@ -190,6 +199,7 @@ impl<A> Handle<A> {
         &mut *self.next
     }
 
+    #[allow(unused)]
     unsafe fn set_next(&self, next: *mut OopHandle) {
         (&mut *(self as *const _ as *mut Self)).next = next;
     }
@@ -198,19 +208,23 @@ impl<A> Handle<A> {
         &mut *self.prev
     }
 
-    fn as_ptr(&self) -> *mut OopHandle {
+    unsafe fn set_prev(&self, prev: *mut OopHandle) {
+        (&mut *(self as *const _ as *mut Self)).prev = prev;
+    }
+
+    pub fn as_ptr(&self) -> *mut OopHandle {
         self as *const _ as *const _ as *mut _
     }
 
     unsafe fn new(oop: *mut A, head: &OopHandle) -> Box<Self> {
         let thiz = Box::new(Handle {
             oop: oop as Oop,
-            prev: head.as_ptr(),
-            next: head.next,
+            prev: head.prev,
+            next: head.as_ptr(),
             phantom_data: PhantomData,
         });
-        head.next().prev = Handle::<A>::as_ptr(&*thiz);
-        (*head).set_next(thiz.as_ptr());
+        head.prev().next = Handle::<A>::as_ptr(&*thiz);
+        (*head).set_prev(thiz.as_ptr());
         thiz
     }
 
