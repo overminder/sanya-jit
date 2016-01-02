@@ -6,10 +6,12 @@ use scheme::ast::sexpr::*;
 use scheme::ast::nir::*;
 use scheme::ast::sexpr_to_nir::*;
 use scheme::ast::nir_lint::*;
+use scheme::c0::*;
 
 use std::env;
 use std::fs::File;
 use std::io::{self, stdin, stdout, Read, Write};
+use std::mem::transmute;
 
 fn run_file(path: &str) -> io::Result<()> {
     let mut src = String::new();
@@ -24,6 +26,14 @@ fn run_file(path: &str) -> io::Result<()> {
     println!("Compiled scdefns: {:?}", scdefns);
 
     lint_scdefns(&mut scdefns).unwrap();
+    let mut ctx = ModuleContext::new();
+    for scdefn in scdefns {
+        ctx.add_scdefn(scdefn);
+    }
+    let main_entry = ctx.compile_all();
+    unsafe {
+        transmute::<usize, fn()>(main_entry)();
+    }
 
     Ok(())
 }

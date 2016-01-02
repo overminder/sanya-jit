@@ -7,11 +7,11 @@ use std::path::Path;
 use std::io::{BufReader, BufRead, Write};
 
 use super::*;
-use super::traits::*;
 use test::Bencher;
 use super::Addr::*;
 use super::Scale::*;
 use mem::JitMem;
+use emit::*;
 
 // Test traits.
 

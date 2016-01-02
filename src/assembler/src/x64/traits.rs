@@ -68,4 +68,3 @@ pub trait EmitRet {
 pub trait EmitNop {
     fn nop(&mut self) -> &mut Self;
 }
-

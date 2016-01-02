@@ -31,15 +31,16 @@ pub fn compile_scdefn(e: &SExpr) -> ScDefn {
                                                                        box NReadArgument(nth_arg))
                                                        })
                                                        .collect();
-                    let mut body: NodeList = form[2..form.len() - 1]
-                                                 .iter()
-                                                 .map(|e| compile_expr(e, &mut frame, false))
-                                                 .collect();
-                    body.push(compile_expr(form.last().unwrap(), &mut frame, true));
+                    let body: NodeList = form[2..form.len() - 1]
+                                             .iter()
+                                             .map(|e| compile_expr(e, &mut frame, false))
+                                             .collect();
+                    let last = box compile_expr(form.last().unwrap(), &mut frame, true);
                     ScDefn::new(name.to_owned(),
                                 args,
                                 frame,
-                                NSeq(read_arg_nodes.into_iter().chain(body.into_iter()).collect()))
+                                NSeq(read_arg_nodes.into_iter().chain(body.into_iter()).collect(),
+                                     last))
                 }
                 _ => panic!("Not a valid ScDefn: {:?}", e),
             }
@@ -55,6 +56,9 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                 [Sym(ref tag), Sym(ref name), ref form] if tag == "define" => {
                     let ix = frame.find_or_create_slot(name);
                     NWriteLocal(ix, box compile_expr(form, frame, is_tail))
+                }
+                [Sym(ref tag), ref e1] if tag == "display#" => {
+                    NPrimO(PrimOpO::Display, box compile_expr(e1, frame, false))
                 }
                 [Sym(ref tag), ref e1, ref e2] => {
                     let n1 = compile_expr(e1, frame, false);
@@ -82,13 +86,12 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                                 // Unspecified
                                 return NMkFixnum(-1);
                             }
-                            let mut body: Vec<_> = es[1..es.len() - 1]
-                                                       .iter()
-                                                       .map(|e| compile_expr(e, frame, false))
-                                                       .collect();
-                            let last = compile_expr(es.last().unwrap(), frame, is_tail);
-                            body.push(last);
-                            return NSeq(body);
+                            let body: Vec<_> = es[1..es.len() - 1]
+                                                   .iter()
+                                                   .map(|e| compile_expr(e, frame, false))
+                                                   .collect();
+                            let last = box compile_expr(es.last().unwrap(), frame, is_tail);
+                            return NSeq(body, last);
                         }
                     }
                     let func = compile_expr(&es[0], frame, false);

@@ -1,9 +1,9 @@
 extern crate assembler;
 
-use assembler::x64::{Emit, Label};
 use assembler::x64::R64::*;
 use assembler::x64::traits::*;
 use assembler::mem::JitMem;
+use assembler::emit::{Emit, Label};
 
 fn make_fibo_code(emit: &mut Emit) {
     let mut fibo_entry = Label::new();

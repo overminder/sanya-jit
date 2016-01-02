@@ -31,6 +31,10 @@ impl ScDefn {
         &self.name
     }
 
+    pub fn frame_descr(&self) -> &FrameDescr {
+        &self.frame_descr
+    }
+
     pub fn body(&self) -> &RawNode {
         &self.body
     }
@@ -52,6 +56,10 @@ impl FrameDescr {
             next_ix: 0,
             name_to_ix: HashMap::new(),
         }
+    }
+
+    pub fn slot_count(&self) -> usize {
+        self.next_ix
     }
 
     pub fn lookup_slot(&self, name: &str) -> Option<usize> {
@@ -87,7 +95,7 @@ pub enum RawNode {
         on_true: Node,
         on_false: Node,
     },
-    NSeq(NodeList),
+    NSeq(NodeList, Node),
 
     // Storage manipulations.
     NReadArgument(usize),
@@ -97,6 +105,12 @@ pub enum RawNode {
 
     // PrimOps.
     NPrimFF(PrimOpFF, Node, Node), // Fixnum binary ops.
+    NPrimO(PrimOpO, Node), // Oop binary ops.
+}
+
+#[derive(Debug)]
+pub enum PrimOpO {
+    Display,
 }
 
 #[derive(Debug)]
@@ -106,49 +120,70 @@ pub enum PrimOpFF {
     Sub,
 }
 
+pub trait NodeTraverser<E> {
+    fn before(&mut self, _node: &mut RawNode) -> Result<TraversalDirection, E> {
+        Ok(TraversalDirection::Forward)
+    }
+}
+
+/// Defines the way to traverse the children of a given node.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TraversalDirection {
+    // Normal applicative order.
+    Forward,
+
+    // Don't look into the children.
+    Skip,
+}
+
 impl RawNode {
     // Monadic node traversals. The fixpoint functor could greatly simplify
     // this process but Rust currently doesn't have that.
-    //
-    // It accepts a `&mut F` rather than a `F` because of https://stackoverflow.com/a/31197781
-    pub fn foreach_readglobal<E, F: Fn(&mut String) -> Result<(), E>>(&mut self,
-                                                                      f: &mut F)
-                                                                      -> Result<(), E> {
-        match self {
-            &mut NMkPair(ref mut n1, ref mut n2) => {
-                try!(n1.foreach_readglobal(f));
-                try!(n2.foreach_readglobal(f));
-            }
-            &mut NCall { ref mut func, ref mut args, .. } => {
-                try!(func.foreach_readglobal(f));
-                for arg in args {
-                    try!(arg.foreach_readglobal(f));
-                }
-            }
-            &mut NIf { ref mut cond, ref mut on_true, ref mut on_false } => {
-                try!(cond.foreach_readglobal(f));
-                try!(on_true.foreach_readglobal(f));
-                try!(on_false.foreach_readglobal(f));
-            }
-            &mut NSeq(ref mut ns) => {
-                for n in ns {
-                    try!(n.foreach_readglobal(f));
-                }
-            }
-            &mut NReadGlobal(ref mut g) => try!(f(g)),
-            &mut NWriteLocal(_, ref mut n) => try!(n.foreach_readglobal(f)),
-            &mut NPrimFF(_, ref mut n1, ref mut n2) => {
-                try!(n1.foreach_readglobal(f));
-                try!(n2.foreach_readglobal(f));
-            }
-            _ => (),
-        }
+    pub fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E> {
+        use self::TraversalDirection::*;
 
+        let direction = try!(t.before(self));
+        match direction {
+            Forward => {
+                match self {
+                    &mut NMkPair(ref mut n1, ref mut n2) => {
+                        try!(n1.traverse(t));
+                        try!(n2.traverse(t));
+                    }
+                    &mut NCall { ref mut func, ref mut args, .. } => {
+                        try!(func.traverse(t));
+                        for arg in args {
+                            try!(arg.traverse(t));
+                        }
+                    }
+                    &mut NIf { ref mut cond, ref mut on_true, ref mut on_false } => {
+                        try!(cond.traverse(t));
+                        try!(on_true.traverse(t));
+                        try!(on_false.traverse(t));
+                    }
+                    &mut NSeq(ref mut ns, ref mut n) => {
+                        for n in ns {
+                            try!(n.traverse(t));
+                        }
+                        try!(n.traverse(t));
+                    }
+                    &mut NWriteLocal(_, ref mut n) => try!(n.traverse(t)),
+                    &mut NPrimFF(_, ref mut n1, ref mut n2) => {
+                        try!(n1.traverse(t));
+                        try!(n2.traverse(t));
+                    }
+                    &mut NPrimO(_, ref mut n) => try!(n.traverse(t)),
+                    _ => {}
+                }
+            }
+            Skip => {}
+        }
         Ok(())
     }
 }
 
 pub fn new_call(func: RawNode, args: NodeList, is_tail: bool) -> RawNode {
+    assert!(args.len() <= 6, "argc > 6 not implemented");
     NCall {
         func: Box::new(func),
         args: args,

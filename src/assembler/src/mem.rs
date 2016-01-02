@@ -4,26 +4,30 @@ use std::mem::transmute;
 use mmap::MemoryMap;
 use mmap::MapOption::{MapReadable, MapWritable, MapExecutable};
 
-pub struct JitMem<'a> {
-    _inner: MemoryMap,
-    inner_slice: &'a mut [u8],
+pub struct JitMem {
+    inner: MemoryMap,
 }
 
-impl<'a> JitMem<'a> {
+impl JitMem {
     pub fn new(bs: &[u8]) -> Self {
         let inner = MemoryMap::new(bs.len(), &[MapReadable, MapWritable, MapExecutable]).unwrap();
-        let inner_slice = unsafe { slice::from_raw_parts_mut(inner.data(), inner.len()) };
-        for (dst, src) in inner_slice.iter_mut().zip(bs.iter()) {
-            *dst = *src;
+        let thiz = JitMem { inner: inner };
+
+        unsafe {
+            let inner_slice = thiz.inner_slice_mut();
+            for (dst, src) in inner_slice.iter_mut().zip(bs.iter()) {
+                *dst = *src;
+            }
         }
-        JitMem {
-            _inner: inner,
-            inner_slice: inner_slice,
-        }
+        thiz
+    }
+
+    unsafe fn inner_slice_mut(&self) -> &mut [u8] {
+        slice::from_raw_parts_mut(self.inner.data(), self.inner.len())
     }
 
     pub unsafe fn call_ptr_ptr(&self, arg: isize) -> isize {
-        let as_fn: extern "C" fn(isize) -> isize = transmute(self.inner_slice.as_ptr());
+        let as_fn: extern "C" fn(isize) -> isize = transmute(self.inner_slice_mut().as_ptr());
         as_fn(arg)
     }
 
@@ -36,11 +40,11 @@ impl<'a> JitMem<'a> {
                                 arg6: isize)
                                 -> isize {
         let as_fn: extern "C" fn(isize, isize, isize, isize, isize, isize) -> isize =
-            transmute(self.inner_slice.as_ptr());
+            transmute(self.inner_slice_mut().as_ptr());
         as_fn(arg1, arg2, arg3, arg4, arg5, arg6)
     }
 
     pub unsafe fn start(&self) -> usize {
-        transmute(self.inner_slice.as_ptr())
+        transmute(self.inner_slice_mut().as_ptr())
     }
 }
