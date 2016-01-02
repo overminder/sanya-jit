@@ -20,10 +20,6 @@ pub struct ModuleContext {
 
 type LabelMap = HashMap<String, Label>;
 
-extern "C" fn display_isize(i: isize) {
-    println!("display_isize: {}", i);
-}
-
 impl ModuleContext {
     pub fn new() -> Self {
         ModuleContext {
@@ -115,14 +111,35 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                 }
             }
             &mut NIf { ref mut cond, ref mut on_true, ref mut on_false } => {
-                try!(cond.traverse(self));
-
-                let mut label_done = Label::new();
                 let mut label_false = Label::new();
+                let mut label_done = Label::new();
 
-                self.emit
-                    .cmp(RAX, 0)
-                    .je(&mut label_false);
+                let special_case = if let &mut NPrimFF(PrimOpFF::Lt, ref mut lhs, ref mut rhs) =
+                                          cond.as_mut() {
+                    if OPTIMIZE_IF_CMP {
+                        try!(rhs.traverse(self));
+                        self.emit.push(RAX);
+                        try!(lhs.traverse(self));
+                        self.emit
+                            .pop(TMP)
+                            .cmp(RAX, TMP)
+                            .jge(&mut label_false);
+
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if !special_case {
+                    try!(cond.traverse(self));
+
+                    self.emit
+                        .cmp(RAX, 0)
+                        .je(&mut label_false);
+                }
 
                 try!(on_true.traverse(self));
                 self.emit
@@ -172,14 +189,14 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                         let mut lbl_true = Label::new();
                         let mut lbl_done = Label::new();
                         self.emit
-                            .cmp(RAX, &Addr::B(RSP))
+                            .pop(TMP)
+                            .cmp(RAX, TMP)
                             .jl(&mut lbl_true)
                             .mov(RAX, 0)
                             .jmp(&mut lbl_done)
                             .bind(&mut lbl_true)
                             .mov(RAX, 1)
-                            .bind(&mut lbl_done)
-                            .add(RSP, 8);
+                            .bind(&mut lbl_done);
                     }
                 }
             }
@@ -200,3 +217,14 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
         Ok(TraversalDirection::Skip)
     }
 }
+
+// Misc
+
+extern "C" fn display_isize(i: isize) {
+    println!("display_isize: {}", i);
+}
+
+// Caller saved regs.
+const TMP: R64 = R10;
+
+const OPTIMIZE_IF_CMP: bool = true;
