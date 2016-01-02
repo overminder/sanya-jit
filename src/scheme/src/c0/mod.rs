@@ -77,9 +77,16 @@ impl FunctionContext {
             })
             .unwrap();
 
-        emit.mov(RSP, RBP)
-            .pop(RBP)
-            .ret();
+        emit_epilogue(emit, true);
+    }
+}
+
+fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
+    emit.mov(RSP, RBP)
+        .pop(RBP);
+
+    if want_ret {
+        emit.ret();
     }
 }
 
@@ -105,6 +112,7 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                     self.emit.pop(*r);
                 }
                 if is_tail {
+                    emit_epilogue(self.emit, false);
                     self.emit.jmp(RAX);
                 } else {
                     self.emit.call(RAX);
