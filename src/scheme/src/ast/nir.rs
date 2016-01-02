@@ -9,6 +9,7 @@ use std::boxed::Box;
 use std::collections::HashMap;
 
 /// A supercombinator is a top-level function without free variables.
+#[derive(Debug)]
 pub struct ScDefn {
     name: String,
     args: Vec<String>,
@@ -16,6 +17,30 @@ pub struct ScDefn {
     body: RawNode,
 }
 
+impl ScDefn {
+    pub fn new(name: String, args: Vec<String>, frame_descr: FrameDescr, body: RawNode) -> Self {
+        ScDefn {
+            name: name,
+            args: args,
+            frame_descr: frame_descr,
+            body: body,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn body(&self) -> &RawNode {
+        &self.body
+    }
+
+    pub fn body_mut(&mut self) -> &mut RawNode {
+        &mut self.body
+    }
+}
+
+#[derive(Debug)]
 pub struct FrameDescr {
     next_ix: usize,
     name_to_ix: HashMap<String, usize>,
@@ -47,11 +72,11 @@ impl FrameDescr {
 
 #[derive(Debug)]
 pub enum RawNode {
-    // Allocations
+    // Allocations.
     NMkFixnum(isize),
     NMkPair(Node, Node),
 
-    // Flow controls.
+    // Control flows.
     NCall {
         func: Node,
         args: NodeList,
@@ -65,15 +90,62 @@ pub enum RawNode {
     NSeq(NodeList),
 
     // Storage manipulations.
+    NReadArgument(usize),
     NReadGlobal(String),
     NReadLocal(usize),
-    NWriteGlobal(String, Node),
     NWriteLocal(usize, Node),
 
     // PrimOps.
-    NPrimFixnumAdd(Node, Node),
-    NPrimFixnumLt(Node, Node),
-    NPrimFixnumSub(Node, Node),
+    NPrimFF(PrimOpFF, Node, Node), // Fixnum binary ops.
+}
+
+#[derive(Debug)]
+pub enum PrimOpFF {
+    Add,
+    Lt,
+    Sub,
+}
+
+impl RawNode {
+    // Monadic node traversals. The fixpoint functor could greatly simplify
+    // this process but Rust currently doesn't have that.
+    //
+    // It accepts a `&mut F` rather than a `F` because of https://stackoverflow.com/a/31197781
+    pub fn foreach_readglobal<E, F: Fn(&mut String) -> Result<(), E>>(&mut self,
+                                                                      f: &mut F)
+                                                                      -> Result<(), E> {
+        match self {
+            &mut NMkPair(ref mut n1, ref mut n2) => {
+                try!(n1.foreach_readglobal(f));
+                try!(n2.foreach_readglobal(f));
+            }
+            &mut NCall { ref mut func, ref mut args, .. } => {
+                try!(func.foreach_readglobal(f));
+                for arg in args {
+                    try!(arg.foreach_readglobal(f));
+                }
+            }
+            &mut NIf { ref mut cond, ref mut on_true, ref mut on_false } => {
+                try!(cond.foreach_readglobal(f));
+                try!(on_true.foreach_readglobal(f));
+                try!(on_false.foreach_readglobal(f));
+            }
+            &mut NSeq(ref mut ns) => {
+                for n in ns {
+                    try!(n.foreach_readglobal(f));
+                }
+            }
+            &mut NReadGlobal(ref mut g) => try!(f(g)),
+            &mut NWriteLocal(_, ref mut n) => try!(n.foreach_readglobal(f)),
+            &mut NPrimFF(_, ref mut n1, ref mut n2) => {
+                try!(n1.foreach_readglobal(f));
+                try!(n2.foreach_readglobal(f));
+            }
+            _ => (),
+        }
+
+        Ok(())
+    }
 }
 
 pub fn new_call(func: RawNode, args: NodeList, is_tail: bool) -> RawNode {

@@ -17,6 +17,29 @@ pub enum SExpr {
     List(Vec<SExpr>),
 }
 
+impl SExpr {
+    pub fn is_list(&self) -> bool {
+        match self {
+            &List(..) => true,
+            _ => false,
+        }
+    }
+
+    pub fn unwrap_list(&self) -> Result<&[SExpr], String> {
+        match self {
+            &List(ref es) => Ok(es),
+            _ => Err(format!("Not a list: {:?}", self)),
+        }
+    }
+
+    pub fn unwrap_sym(&self) -> Result<&str, String> {
+        match self {
+            &Sym(ref s) => Ok(s),
+            _ => Err(format!("Not a sym: {:?}", self)),
+        }
+    }
+}
+
 pub fn parse_many(xs: &str) -> ParseResult<Vec<SExpr>> {
     let xs: Vec<char> = xs.chars().collect();
     let mut pos = 0;

@@ -32,7 +32,7 @@ pub struct InfoTable<A> {
 
 impl<A> Debug for InfoTable<A> {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
-        unsafe { write!(fmt, "<InfoTable {}>", self.name()) }
+        write!(fmt, "<InfoTable {}>", self.name())
     }
 }
 
