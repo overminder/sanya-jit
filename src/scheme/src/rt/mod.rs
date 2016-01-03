@@ -6,6 +6,11 @@ pub mod gc;
 use self::oop::*;
 use self::gc::GcState;
 
+// XXX: Rustc doesn't have offsetof yet.
+pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 0;
+pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 8;
+
+#[repr(C)]
 pub struct Universe {
     pub gc: GcState,
     handle_block: Box<HandleBlock>,
@@ -24,6 +29,10 @@ impl Universe {
             pair_info: infotable_for_pair(),
             fixnum_info: infotable_for_fixnum(),
         }
+    }
+
+    pub fn as_ptr(&self) -> *const Self {
+        self as *const _
     }
 
     pub fn oop_is_pair(&self, oop: &Closure) -> bool {

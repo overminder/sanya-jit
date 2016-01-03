@@ -7,11 +7,11 @@ use scheme::ast::nir::*;
 use scheme::ast::sexpr_to_nir::*;
 use scheme::ast::nir_lint::*;
 use scheme::c0::*;
+use scheme::rt::*;
 
 use std::env;
 use std::fs::File;
 use std::io::{self, stdin, stdout, Read, Write};
-use std::mem::transmute;
 
 fn run_file(path: &str) -> io::Result<()> {
     let mut src = String::new();
@@ -19,6 +19,8 @@ fn run_file(path: &str) -> io::Result<()> {
         let mut f = try!(File::open(path));
         try!(f.read_to_string(&mut src));
     }
+
+    let mut universe = Universe::new(0x10000);
 
     let es = parse_many(&src).unwrap();
     println!("Parsed sexpr: {:?}", es);
@@ -30,9 +32,9 @@ fn run_file(path: &str) -> io::Result<()> {
     for scdefn in scdefns {
         ctx.add_scdefn(scdefn);
     }
-    let main_entry = ctx.compile_all();
+    let rust_entry = ctx.compile_all(&mut universe);
     unsafe {
-        transmute::<usize, fn()>(main_entry)();
+        rust_entry(universe.as_ptr());
     }
 
     Ok(())

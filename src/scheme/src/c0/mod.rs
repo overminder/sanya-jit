@@ -1,7 +1,11 @@
 /// c0: The baseline compiler.
 
+mod stackmap;
+
+use self::stackmap::*;
 use ast::nir::*;
 use ast::nir::RawNode::*;
+use rt::*;
 
 use assembler::x64::*;
 use assembler::x64::R64::*;
@@ -35,22 +39,55 @@ impl ModuleContext {
         self.functions.insert(sc.name().to_owned(), FunctionContext::new(sc));
     }
 
-    pub fn compile_all(&mut self) -> usize {
+    pub fn compile_all(&mut self, u: &mut Universe) -> JitEntry {
         // 1. Compile each function.
         for (_, ref mut f) in &mut self.functions {
             f.compile(&mut self.emit, &mut self.function_labels);
         }
 
-        // 2. Get main.
-        let main_offset = self.function_labels.get("main").unwrap().offset().unwrap();
+        // 2. Make a rust -> jitted main entry
+        unsafe { transmute::<usize, JitEntry>(self.make_rust_entry(u)) }
+    }
+
+    fn make_rust_entry(&mut self, u: &mut Universe) -> usize {
+        // 1. Build up an entry.
+        let mut entry = Label::new();
+        let main = self.function_labels.get_mut("main").unwrap();
+        emit_nop_until_aligned(&mut self.emit, 0x16);
+
+        self.emit
+            .bind(&mut entry)
+            .push(RBP)
+            .mov(RBP, RSP)
+            .push(ALLOC_PTR)
+            .push(UNIVERSE_PTR)
+            .push(STACKMAP_PTR)
+            .add(RSP, -8)
+            .mov(UNIVERSE_PTR, RDI)
+            .mov(ALLOC_PTR, &universe_alloc_ptr())
+            .mov(STACKMAP_PTR, 0_i64)
+            .call(main)
+            .mov(&universe_alloc_ptr(), ALLOC_PTR)
+            .add(RSP, 8)
+            .pop(STACKMAP_PTR)
+            .pop(UNIVERSE_PTR)
+            .pop(ALLOC_PTR)
+            .mov(RSP, RBP)
+            .pop(RBP)
+            .ret();
+
+        // 2. Get it.
+        let entry_offset = entry.offset().unwrap();
         let jitmem = JitMem::new(self.emit.as_ref());
         self.jitmem = Some(jitmem);
         let start = unsafe { self.jitmem.as_ref().unwrap().start() };
-        println!("compile_all: start = {:#x}", start);
+        println!("compile_all: entry = {:#x}", start);
 
-        start + main_offset
+        start + entry_offset
     }
 }
+
+pub type JitEntry = unsafe extern "C" fn(*const Universe);
 
 pub struct FunctionContext {
     scdefn: ScDefn,
@@ -62,51 +99,70 @@ impl FunctionContext {
     }
 
     fn compile(&mut self, emit: &mut Emit, labels: &mut LabelMap) {
-        emit_nop_until_aligned(emit, 0x16);
+        // Align the function entry.
+        // XXX: I'm not sure if this is correct - need to read the AMD64 ABI
+        // doc for the correct alignment.
+        emit_nop_until_aligned(emit, 0x10);
 
-        emit.bind(labels.get_mut(self.scdefn.name()).unwrap())
-            .push(RBP)
-            .mov(RBP, RSP)
-            .add(RSP, -8 * (self.scdefn.frame_descr().slot_count() as i32));
+        // Bind the function entry. The unwrap here is safe the ModuleContext
+        // has already initialized all the labels in the label map.
+        emit.bind(labels.get_mut(self.scdefn.name()).unwrap());
+        emit_prologue(emit, self.scdefn.frame_descr().slot_count());
 
-        self.scdefn
-            .body_mut()
-            .traverse(&mut FunctionCompiler {
-                emit: emit,
-                labels: labels,
-            })
-            .unwrap();
+        let stackmap = new_stackmap_with_frame_descr(self.scdefn.frame_descr());
+        NodeCompiler::new(emit, labels).compile(self.scdefn.body_mut(), stackmap);
 
         emit_epilogue(emit, true);
     }
 }
 
-fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
-    emit.mov(RSP, RBP)
-        .pop(RBP);
 
-    if want_ret {
-        emit.ret();
-    }
-}
-
-struct FunctionCompiler<'a> {
+struct NodeCompiler<'a> {
     emit: &'a mut Emit,
     labels: &'a mut LabelMap,
 }
 
-impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
-    fn before(&mut self, node: &mut RawNode) -> Result<TraversalDirection, String> {
+impl<'a> NodeCompiler<'a> {
+    fn new(emit: &'a mut Emit, labels: &'a mut LabelMap) -> Self {
+        NodeCompiler {
+            emit: emit,
+            labels: labels,
+        }
+    }
+
+    fn calling_out<F: FnMut(&mut Emit)>(&mut self, mut stackmap: StackMap, mut f: F) {
+        // Ensure the stack is 16-byte aligned after the call.
+        let sp_changed = if (stackmap.len() + 1) & 1 == 1 {
+            self.emit.add(RSP, -8);
+            stackmap.push_word();
+            true
+        } else {
+            false
+        };
+
+        // And materialize the stackmap, since we are calling out.
+        self.emit.mov(STACKMAP_PTR, stackmap.as_word() as i64);
+
+        // Do the actuall call.
+        f(self.emit);
+
+        // And restore the stack.
+        if sp_changed {
+            self.emit.add(RSP, 8);
+        }
+    }
+
+    fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
         match node {
             &mut NMkFixnum(i) => {
                 self.emit.mov(RAX, i as i64);
             }
             &mut NCall { ref mut func, ref mut args, is_tail } => {
                 for arg in args.iter_mut().rev() {
-                    try!(arg.traverse(self));
+                    try!(self.compile(arg, stackmap));
                     self.emit.push(RAX);
                 }
-                try!(func.traverse(self));
+                try!(self.compile(func, stackmap));
 
                 for (r, _) in [RDI, RSI, RDX, RCX, R8, R9].iter().zip(args.iter()) {
                     self.emit.pop(*r);
@@ -115,7 +171,9 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                     emit_epilogue(self.emit, false);
                     self.emit.jmp(RAX);
                 } else {
-                    self.emit.call(RAX);
+                    self.calling_out(stackmap, |emit| {
+                        emit.call(RAX);
+                    });
                 }
             }
             &mut NIf { ref mut cond, ref mut on_true, ref mut on_false } => {
@@ -125,9 +183,9 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                 let special_case = if let &mut NPrimFF(PrimOpFF::Lt, ref mut lhs, ref mut rhs) =
                                           cond.as_mut() {
                     if OPTIMIZE_IF_CMP {
-                        try!(rhs.traverse(self));
+                        try!(self.compile(rhs, stackmap));
                         self.emit.push(RAX);
-                        try!(lhs.traverse(self));
+                        try!(self.compile(lhs, stackmap));
                         self.emit
                             .pop(TMP)
                             .cmp(RAX, TMP)
@@ -142,44 +200,44 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                 };
 
                 if !special_case {
-                    try!(cond.traverse(self));
+                    try!(self.compile(cond, stackmap));
 
                     self.emit
                         .cmp(RAX, 0)
                         .je(&mut label_false);
                 }
 
-                try!(on_true.traverse(self));
+                try!(self.compile(on_true, stackmap));
                 self.emit
                     .jmp(&mut label_done)
                     .bind(&mut label_false);
 
-                try!(on_false.traverse(self));
+                try!(self.compile(on_false, stackmap));
                 self.emit.bind(&mut label_done);
             }
             &mut NSeq(ref mut body, ref mut last) => {
                 for n in body {
-                    try!(n.traverse(self));
+                    try!(self.compile(n, stackmap));
                 }
-                try!(last.traverse(self));
+                try!(self.compile(last, stackmap));
             }
             &mut NReadArgument(arg_ix) => {
                 self.emit.mov(RAX, [RDI, RSI, RDX, RCX, R8, R9][arg_ix]);
             }
             &mut NReadGlobal(ref mut name) => {
-                self.emit.mov(RAX, self.labels.get_mut(name).unwrap());
+                self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
             }
             &mut NReadLocal(ix) => {
-                self.emit.mov(RAX, &Addr::BD(RBP, -8 * (1 + ix as i32)));
+                self.emit.mov(RAX, &frame_slot(ix));
             }
             &mut NWriteLocal(ix, ref mut n) => {
-                try!(n.traverse(self));
-                self.emit.mov(&Addr::BD(RBP, -8 * (1 + ix as i32)), RAX);
+                try!(self.compile(n, stackmap));
+                self.emit.mov(&frame_slot(ix), RAX);
             }
             &mut NPrimFF(ref op, ref mut n1, ref mut n2) => {
-                try!(n2.traverse(self));
+                try!(self.compile(n2, stackmap));
                 self.emit.push(RAX);
-                try!(n1.traverse(self));
+                try!(self.compile(n1, stackmap));
 
                 match *op {
                     PrimOpFF::Add => {
@@ -209,24 +267,90 @@ impl<'a> NodeTraverser<String> for FunctionCompiler<'a> {
                 }
             }
             &mut NPrimO(ref op, ref mut n1) => {
-                try!(n1.traverse(self));
+                try!(self.compile(n1, stackmap));
                 match *op {
                     PrimOpO::Display => {
                         self.emit
                             .mov(RDI, RAX)
-                            .mov(RAX, unsafe { transmute::<_, i64>(display_isize) })
-                            .call(RAX);
+                            .mov(RAX, unsafe { transmute::<_, i64>(display_isize) });
+                        self.calling_out(stackmap, |emit| {
+                            emit.call(RAX);
+                        });
                     }
                 }
             }
             _ => panic!("Unimplemented node: {:?}", node),
         };
 
-        Ok(TraversalDirection::Skip)
+        Ok(())
     }
 }
 
 // Misc
+
+/// Frame Layout:
+///
+/// Higher Addr
+/// ^
+/// | ix                         | value
+/// +----------------------------+------------
+/// | rbp + 8                    | ret addr
+/// | rbp                        | saved rbp
+/// | rbp - 8                    | saved StackMap.as_word
+/// | rbp - (8 + 8 * local_ix)   | local variable slots
+/// | rsp + N ~ rsp              | local tmps (might contain an alignment slot)
+///
+/// Stack Map:
+/// A stackmap contains all the local variables and tmps.
+/// rbp - stackmap.len() * 8 points to the saved stackmap.
+
+fn universe_alloc_ptr() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_PTR)
+}
+
+fn universe_alloc_limit() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_LIMIT)
+}
+
+fn frame_slot(ix: usize) -> Addr {
+    // rbp[ix*8-16] since rbp[-8] is used to save the caller's stackmap.
+    Addr::BD(RBP, -8 * (2 + ix as i32))
+}
+
+fn saved_stackmap() -> Addr {
+    Addr::BD(RBP, -8)
+}
+
+fn emit_prologue(emit: &mut Emit, frame_slots: usize) {
+    emit.push(RBP)
+        .mov(RBP, RSP)
+        .push(STACKMAP_PTR);
+
+    if frame_slots != 0 {
+        emit.add(RSP, -8 * (frame_slots as i32));
+    }
+}
+
+fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
+    emit.mov(STACKMAP_PTR, &saved_stackmap())
+        .mov(RSP, RBP)
+        .pop(RBP);
+
+    if want_ret {
+        emit.ret();
+    }
+}
+
+fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
+    let mut m = StackMap::new();
+
+    // XXX: Check for gcptr-ness when FrameDescr has got that.
+    for _ in 0..frame.slot_count() {
+        m.push_gcptr();
+    }
+
+    m
+}
 
 extern "C" fn display_isize(i: isize) {
     println!("display_isize: {}", i);
@@ -234,5 +358,10 @@ extern "C" fn display_isize(i: isize) {
 
 // Caller saved regs.
 const TMP: R64 = R10;
+
+// Callee saved regs.
+const ALLOC_PTR: R64 = R12;
+const UNIVERSE_PTR: R64 = R13;
+const STACKMAP_PTR: R64 = R14;
 
 const OPTIMIZE_IF_CMP: bool = true;

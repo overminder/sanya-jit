@@ -9,15 +9,16 @@ pub const INFO_TAG_MASK: usize = 0x7;
 pub const INFO_UNTAG_MASK: usize = !INFO_TAG_MASK;
 pub const INFO_SCAVENGED_TAG: usize = 1;
 
+#[repr(C)]
 pub struct GcState {
+    // Used during execution, accessed through generated code.
+    pub alloc_ptr: *mut u8,
+    pub alloc_limit: *mut u8,
+
     _heap: Vec<u8>,
     space_size: usize,
     from_space: *mut u8,
     to_space: *mut u8,
-
-    // Used during execution
-    pub alloc_ptr: *mut u8,
-    pub alloc_limit: *mut u8,
 
     // Used during scavenging.
     copy_ptr: *mut u8,

@@ -296,9 +296,8 @@ impl<'a> EmitMov<&'a Addr, R64> for Emit {
     }
 }
 
-impl<'a> EmitMov<R64, &'a mut Label> for Emit {
-    fn mov(&mut self, dst: R64, src: &mut Label) -> &mut Self {
-        // XXX: It's a lea rather than a mov!
+impl<'a> EmitLea<R64, &'a mut Label> for Emit {
+    fn lea(&mut self, dst: R64, src: &mut Label) -> &mut Self {
         self.lea(dst, &Addr::PcRel(0xff_i32 /* any imm32 */));
         src.patch_last_i32(self);
         self
