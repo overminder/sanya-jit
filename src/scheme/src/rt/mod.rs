@@ -7,7 +7,7 @@ pub mod stackmap;
 
 use self::oop::*;
 use self::gc::GcState;
-use self::stackmap::StackMap;
+use self::stackmap::{FrameIterator, StackMap};
 
 // XXX: Use offsetof after https://github.com/rust-lang/rfcs/issues/1144 is implemented.
 pub const OFFSET_OF_UNIVERSE_STACKMAP_PTR: i32 = 0 * 8;
@@ -49,6 +49,10 @@ impl Universe {
             pair_info: infotable_for_pair(),
             fixnum_info: infotable_for_fixnum(),
         }
+    }
+
+    pub fn iter_frame(&self) -> FrameIterator {
+        FrameIterator::new(self.saved_rbp, self.stackmap, self.base_rbp)
     }
 
     pub fn as_ptr(&self) -> *const Self {

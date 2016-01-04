@@ -16,7 +16,7 @@ fn bitset_set(bs: &mut [u8], ix: usize, value: bool) {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct StackMap {
     length: u8,
     encoding: [u8; 7],
@@ -105,6 +105,7 @@ impl StackMap {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct Frame {
     rbp: usize,
     stackmap: StackMap,
@@ -120,7 +121,8 @@ impl Frame {
 
     unsafe fn prev(&self, until_rbp: usize) -> Option<Self> {
         let prev_rbp = *(self.rbp as *const usize);
-        if prev_rbp == until_rbp {
+        if prev_rbp >= until_rbp {
+            assert_eq!(prev_rbp, until_rbp);
             None
         } else {
             let next_stackmap = *((self.rbp - 8) as *const usize);
@@ -137,8 +139,30 @@ impl Frame {
 }
 
 pub struct FrameIterator {
-    frame: Frame,
+    frame: Option<Frame>,
     until_rbp: usize,
+}
+
+impl FrameIterator {
+    pub fn new(rbp: usize, stackmap: StackMap, until_rbp: usize) -> Self {
+        FrameIterator {
+            frame: Some(Frame::new(rbp, stackmap)),
+            until_rbp: until_rbp,
+        }
+    }
+}
+
+impl Iterator for FrameIterator {
+    type Item = Frame;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(frame) = self.frame.take() {
+            self.frame = unsafe { frame.prev(self.until_rbp) };
+            Some(frame)
+        } else {
+            None
+        }
+    }
 }
 
 pub struct FrameOopSlotIterator<'a> {

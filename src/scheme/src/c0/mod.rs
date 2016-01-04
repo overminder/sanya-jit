@@ -48,30 +48,49 @@ impl ModuleContext {
         unsafe { transmute::<usize, JitEntry>(self.make_rust_entry(u)) }
     }
 
-    fn make_rust_entry(&mut self, u: &mut Universe) -> usize {
+    fn make_rust_entry(&mut self, _u: &mut Universe) -> usize {
         // 1. Build up an entry.
         let mut entry = Label::new();
         let main = self.function_labels.get_mut("main").unwrap();
         emit_nop_until_aligned(&mut self.emit, 0x10);
 
+        // Standard prologue.
         self.emit
             .bind(&mut entry)
             .push(RBP)
-            .mov(RBP, RSP)
+            .mov(RBP, RSP);
+
+        // Save the callee-saved regs clobbered by our runtime.
+        self.emit
             .push(ALLOC_PTR)
             .push(UNIVERSE_PTR)
             .push(STACKMAP_PTR)
-            .add(RSP, -8)
-            .mov(&universe_base_rbp(), RBP)
+            .add(RSP, -8);  // And align the stack.
+
+        // Get the relevant regs from/to the runtime state.
+        self.emit
             .mov(UNIVERSE_PTR, RDI)
+            .mov(&universe_base_rbp(), RBP)
             .mov(ALLOC_PTR, &universe_alloc_ptr())
-            .mov(STACKMAP_PTR, 0_i64)
-            .call(main)
-            .mov(&universe_alloc_ptr(), ALLOC_PTR)
+            .mov(STACKMAP_PTR, 0_i64);
+
+        // Enter the real main.
+        self.emit
+            .call(main);
+
+        // Sync back the regs to the runtime state.
+        self.emit
+            .mov(&universe_alloc_ptr(), ALLOC_PTR);
+
+        // Restore the saved regs.
+        self.emit
             .add(RSP, 8)
             .pop(STACKMAP_PTR)
             .pop(UNIVERSE_PTR)
-            .pop(ALLOC_PTR)
+            .pop(ALLOC_PTR);
+
+        // Standard epilogue.
+        self.emit
             .mov(RSP, RBP)
             .pop(RBP)
             .ret();
@@ -110,7 +129,7 @@ impl FunctionContext {
         emit_prologue(emit, self.scdefn.frame_descr().slot_count());
 
         let stackmap = new_stackmap_with_frame_descr(self.scdefn.frame_descr());
-        NodeCompiler::new(emit, labels).compile(self.scdefn.body_mut(), stackmap);
+        NodeCompiler::new(emit, labels).compile(self.scdefn.body_mut(), stackmap).unwrap();
 
         emit_epilogue(emit, true);
     }
@@ -407,9 +426,20 @@ extern "C" fn display_isize(i: isize) {
     println!("display_isize: {}", i);
 }
 
-extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
+unsafe extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
     // Unwind the stack.
-    // universe.
+    let reason = InlineSym::from_word(w);
+    println!("Panic (cause = {}), Unwinding the stack.", reason.as_str());
+    for (frame_no, frame) in (0..).zip(universe.iter_frame()) {
+        println!("Frame {}: {:?}", frame_no, frame);
+        for (slot_no, oop_slot) in (0..).zip(frame.iter_oop()) {
+            let oop = *oop_slot;
+            println!("  Slot {}: *{:#x} = {}",
+                     slot_no,
+                     transmute::<_, usize>(oop_slot),
+                     oop);
+        }
+    }
 
     panic!("panic_inline_sym: {}", InlineSym::from_word(w).as_str());
 }
