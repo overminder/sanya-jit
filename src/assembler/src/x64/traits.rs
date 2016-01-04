@@ -61,6 +61,34 @@ pub trait EmitJcc<Op> {
     }
 }
 
+pub trait EmitCmovcc<Dst, Src> {
+    fn cmovcc(&mut self, cond: Cond, dst: Dst, src: Src) -> &mut Self;
+
+    fn cmove(&mut self, dst: Dst, src: Src) -> &mut Self {
+        self.cmovcc(Cond::E, dst, src)
+    }
+
+    fn cmovne(&mut self, dst: Dst, src: Src) -> &mut Self {
+        self.cmovcc(Cond::NE, dst, src)
+    }
+
+    fn cmovl(&mut self, dst: Dst, src: Src) -> &mut Self {
+        self.cmovcc(Cond::L, dst, src)
+    }
+
+    fn cmovge(&mut self, dst: Dst, src: Src) -> &mut Self {
+        self.cmovcc(Cond::GE, dst, src)
+    }
+
+    fn cmovle(&mut self, dst: Dst, src: Src) -> &mut Self {
+        self.cmovcc(Cond::LE, dst, src)
+    }
+
+    fn cmovg(&mut self, dst: Dst, src: Src) -> &mut Self {
+        self.cmovcc(Cond::G, dst, src)
+    }
+}
+
 pub trait EmitRet {
     fn ret(&mut self) -> &mut Self;
 }

@@ -658,6 +658,22 @@ impl Enumerate for Cond {
     }
 }
 
+impl ATTSyntax for Cond {
+    fn as_att_syntax(&self) -> String {
+        use super::Cond::*;
+
+        match *self {
+            E => "e",
+            NE => "ne",
+            L => "l",
+            G => "g",
+            LE => "le",
+            GE => "ge",
+        }
+        .to_owned()
+    }
+}
+
 struct Jcc {
     cond: Cond,
     offset: i32,
@@ -680,17 +696,9 @@ fn jcc_insn_size(offset: i32) -> u32 {
 
 impl ATTSyntax for Jcc {
     fn as_att_syntax(&self) -> String {
-        use super::Cond::*;
         use std::num::Wrapping;
 
-        let rator = match self.cond {
-            E => "je",
-            NE => "jne",
-            L => "jl",
-            G => "jg",
-            LE => "jle",
-            GE => "jge",
-        };
+        let rator = format!("j{}", self.cond.as_att_syntax());
 
         let dst = Wrapping(self.here) + Wrapping(self.offset as u32) +
                   Wrapping(jcc_insn_size(self.offset));
@@ -711,6 +719,50 @@ impl Enumerate for Jcc {
                     here: here,
                 });
                 here += jcc_insn_size(*i);
+            }
+        }
+        res
+    }
+}
+
+enum Cmovcc {
+    R64R64(Cond, R64, R64),
+}
+
+impl Instr for Cmovcc {
+    fn emit(&self, buf: &mut Emit) {
+        match self {
+            &Cmovcc::R64R64(cond, dst, src) => buf.cmovcc(cond, dst, src),
+        };
+    }
+}
+
+impl ATTSyntax for Cmovcc {
+    fn as_att_syntax(&self) -> String {
+        let cond;
+        let rand;
+
+        match self {
+            &Cmovcc::R64R64(cond_, dst, src) => {
+                cond = cond_;
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+        }
+
+        let rator = format!("cmov{}", cond.as_att_syntax());
+
+        format!("{:7}{}", rator, rand)
+    }
+}
+
+impl Enumerate for Cmovcc {
+    fn possible_enumerations() -> Vec<Self> {
+        let mut res = vec![];
+        for dst in &R64::possible_enumerations() {
+            for src in &R64::possible_enumerations() {
+                for c in Cond::possible_enumerations() {
+                    res.push(Cmovcc::R64R64(c, *dst, *src));
+                }
             }
         }
         res
@@ -784,6 +836,7 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
 
 #[test]
 fn test_assembly_matches_disassembly() {
+    assert_assembly_matches_disassembly::<Cmovcc>();
     assert_assembly_matches_disassembly::<Push>();
     assert_assembly_matches_disassembly::<Pop>();
     assert_assembly_matches_disassembly::<Arith>();

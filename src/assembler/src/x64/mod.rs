@@ -385,6 +385,15 @@ impl<'a> EmitJcc<&'a mut Label> for Emit {
     }
 }
 
+impl EmitCmovcc<R64, R64> for Emit {
+    fn cmovcc(&mut self, cond: Cond, dst: R64, src: R64) -> &mut Self {
+        let modrm = ModRM::direct(dst /* reg */, src /* rm */);
+        let rex = REX::w().with_modrm(modrm);
+        self.write_bytes(&[rex.encoding(), 0x0F, 0x40 + (cond as u8), modrm.encoding()]);
+        self
+    }
+}
+
 impl EmitRet for Emit {
     fn ret(&mut self) -> &mut Self {
         self.write_byte(0xC3);

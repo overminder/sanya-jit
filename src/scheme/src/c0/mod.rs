@@ -101,7 +101,9 @@ impl ModuleContext {
         let jitmem = JitMem::new(self.emit.as_ref());
         self.jitmem = Some(jitmem);
         let start = unsafe { self.jitmem.as_ref().unwrap().start() };
-        println!("compile_all: entry = {:#x}", start);
+        println!("compile_all: entry = {:#x}, len = {}",
+                 start,
+                 self.emit.here());
 
         start + entry_offset
     }
@@ -320,18 +322,11 @@ impl<'a> NodeCompiler<'a> {
                             .sub(RAX, &(TMP + 8));
                     }
                     PrimOpFF::Lt => {
-                        // XXX: Use cmovcc
-                        let mut lbl_true = Label::new();
-                        let mut lbl_done = Label::new();
-
                         self.emit
                             .cmp(RAX, &(TMP + 8))
-                            .jl(&mut lbl_true)
+                            .mov(TMP, 1)
                             .mov(RAX, 0)
-                            .jmp(&mut lbl_done)
-                            .bind(&mut lbl_true)
-                            .mov(RAX, 1)
-                            .bind(&mut lbl_done);
+                            .cmovl(RAX, TMP);
                     }
 
                 }
@@ -360,6 +355,22 @@ impl<'a> NodeCompiler<'a> {
                                 .mov(RAX, unsafe { transmute::<_, i64>(panic_inline_sym) })
                                 .call(RAX);
                         });
+                    }
+                    PrimOpO::Fixnump => {
+                        self.emit
+                            .mov(RAX, &Addr::B(RAX))
+                            .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
+                            .cmp(RAX, TMP)
+                            .mov(TMP, 1)
+                            .mov(RAX, 0)
+                            .cmove(RAX, TMP);
+
+                        let mut map0 = stackmap;
+                        self.push_word(RAX, &mut map0);
+                        self.emit_fixnum_allocation(map0);
+                        self.emit
+                            .pop(TMP)
+                            .mov(&(RAX + 8), TMP);
                     }
                 }
             }
