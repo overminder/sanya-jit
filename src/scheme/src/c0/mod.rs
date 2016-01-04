@@ -3,6 +3,7 @@
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
+use rt::oop::{Closure, Fixnum, IsOop};
 use rt::stackmap::StackMap;
 use rt::inlinesym::InlineSym;
 
@@ -41,7 +42,7 @@ impl ModuleContext {
     pub fn compile_all(&mut self, u: &mut Universe) -> JitEntry {
         // 1. Compile each function.
         for (_, ref mut f) in &mut self.functions {
-            f.compile(&mut self.emit, &mut self.function_labels);
+            f.compile(&mut self.emit, &mut self.function_labels, u);
         }
 
         // 2. Make a rust -> jitted main entry
@@ -117,7 +118,7 @@ impl FunctionContext {
         FunctionContext { scdefn: sc }
     }
 
-    fn compile(&mut self, emit: &mut Emit, labels: &mut LabelMap) {
+    fn compile(&mut self, emit: &mut Emit, labels: &mut LabelMap, u: &Universe) {
         // Align the function entry.
         // XXX: I'm not sure if this is correct - need to read the AMD64 ABI
         // doc for the correct alignment.
@@ -129,7 +130,7 @@ impl FunctionContext {
         emit_prologue(emit, self.scdefn.frame_descr().slot_count());
 
         let stackmap = new_stackmap_with_frame_descr(self.scdefn.frame_descr());
-        NodeCompiler::new(emit, labels).compile(self.scdefn.body_mut(), stackmap).unwrap();
+        NodeCompiler::new(emit, labels, u).compile(self.scdefn.body_mut(), stackmap).unwrap();
 
         emit_epilogue(emit, true);
     }
@@ -139,6 +140,7 @@ impl FunctionContext {
 struct NodeCompiler<'a> {
     emit: &'a mut Emit,
     labels: &'a mut LabelMap,
+    universe: &'a Universe,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -148,10 +150,11 @@ enum CallingConv {
 }
 
 impl<'a> NodeCompiler<'a> {
-    fn new(emit: &'a mut Emit, labels: &'a mut LabelMap) -> Self {
+    fn new(emit: &'a mut Emit, labels: &'a mut LabelMap, universe: &'a Universe) -> Self {
         NodeCompiler {
             emit: emit,
             labels: labels,
+            universe: universe,
         }
     }
 
@@ -199,10 +202,18 @@ impl<'a> NodeCompiler<'a> {
         stackmap.push_gcptr();
     }
 
+    fn push_word(&mut self, r: R64, stackmap: &mut StackMap) {
+        self.emit.push(r);
+        stackmap.push_word();
+    }
+
     fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
         match node {
             &mut NMkFixnum(i) => {
-                self.emit.mov(RAX, i as i64);
+                self.emit_fixnum_allocation(stackmap);
+                self.emit
+                    .mov(TMP, i as i64)
+                    .mov(&(RAX + 8), TMP);
             }
             &mut NCall { ref mut func, ref mut args, is_tail } => {
                 let mut precall_map = stackmap;
@@ -236,7 +247,9 @@ impl<'a> NodeCompiler<'a> {
                         self.push_oop(RAX, &mut map0);
                         try!(self.compile(lhs, map0));
                         self.emit
+                            .mov(RAX, &(RAX + 8))
                             .pop(TMP)
+                            .mov(TMP, &(TMP + 8))
                             .cmp(RAX, TMP)
                             .jge(&mut label_false);
 
@@ -252,6 +265,7 @@ impl<'a> NodeCompiler<'a> {
                     try!(self.compile(cond, stackmap));
 
                     self.emit
+                        .mov(RAX, &(RAX + 8))
                         .cmp(RAX, 0)
                         .je(&mut label_false);
                 }
@@ -289,24 +303,29 @@ impl<'a> NodeCompiler<'a> {
                 self.push_oop(RAX, &mut map0);
                 try!(self.compile(n1, map0));
 
+                // Unbox the lhs and pop the rhs.
+                self.emit
+                    .mov(RAX, &(RAX + 8))
+                    .pop(TMP);
+                map0.pop();
+
+                // Save the unboxed result to %rax
                 match *op {
                     PrimOpFF::Add => {
                         self.emit
-                            .add(RAX, &Addr::B(RSP))
-                            .add(RSP, 8);
+                            .add(RAX, &(TMP + 8));
                     }
                     PrimOpFF::Sub => {
                         self.emit
-                            .sub(RAX, &Addr::B(RSP))
-                            .add(RSP, 8);
+                            .sub(RAX, &(TMP + 8));
                     }
                     PrimOpFF::Lt => {
                         // XXX: Use cmovcc
                         let mut lbl_true = Label::new();
                         let mut lbl_done = Label::new();
+
                         self.emit
-                            .pop(TMP)
-                            .cmp(RAX, TMP)
+                            .cmp(RAX, &(TMP + 8))
                             .jl(&mut lbl_true)
                             .mov(RAX, 0)
                             .jmp(&mut lbl_done)
@@ -314,17 +333,24 @@ impl<'a> NodeCompiler<'a> {
                             .mov(RAX, 1)
                             .bind(&mut lbl_done);
                     }
+
                 }
+                // Allocate a new fixnum to store the result.
+                self.push_word(RAX, &mut map0);
+                self.emit_fixnum_allocation(map0);
+                self.emit
+                    .pop(TMP)
+                    .mov(&(RAX + 8), TMP);
             }
             &mut NPrimO(ref op, ref mut n1) => {
                 try!(self.compile(n1, stackmap));
                 match *op {
                     PrimOpO::Display => {
-                        self.emit
-                            .mov(RDI, RAX)
-                            .mov(RAX, unsafe { transmute::<_, i64>(display_isize) });
                         self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                            emit.call(RAX);
+                            emit.mov(RDI, RAX)
+                                .mov(RSI, UNIVERSE_PTR)
+                                .mov(RAX, unsafe { transmute::<_, i64>(display_oop) })
+                                .call(RAX);
                         });
                     }
                     PrimOpO::PanicInlineSym => {
@@ -341,6 +367,37 @@ impl<'a> NodeCompiler<'a> {
         };
 
         Ok(())
+    }
+
+    // XXX: Currently all the allocation routines are inlined. Is this good?
+    fn emit_fixnum_allocation(&mut self, stackmap: StackMap) {
+        let mut label_alloc_success = Label::new();
+        let alloc_size = self.universe.fixnum_info.sizeof_instance() as i32;
+
+        // Check heap overflow.
+        self.emit
+            .mov(RAX, ALLOC_PTR)
+            .add(ALLOC_PTR, alloc_size)
+            .cmp(ALLOC_PTR, &universe_alloc_limit())
+            .jle(&mut label_alloc_success);
+
+        // Slow case: sync the runtime state and call out for GC.
+        self.emit
+            .sub(ALLOC_PTR, alloc_size);
+
+        self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+            emit.mov(RDI, UNIVERSE_PTR)
+                .mov(RSI, alloc_size as i64)
+                .mov(RAX, unsafe { transmute::<_, i64>(full_gc) })
+                .call(RAX);
+        });
+        // Falls through.
+
+        // Fast case: we are done.
+        self.emit
+            .bind(&mut label_alloc_success)
+            .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
+            .mov(&Addr::B(RAX), TMP);
     }
 }
 
@@ -422,8 +479,13 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     m
 }
 
-extern "C" fn display_isize(i: isize) {
-    println!("display_isize: {}", i);
+unsafe extern "C" fn display_oop(raw: usize, universe: &Universe) {
+    let oop = Closure::from_raw(raw);
+    if universe.oop_is_fixnum(oop) {
+        println!("display_oop: Fixnum {}", oop.oop_cast::<Fixnum>().value);
+    } else {
+        panic!("Doesn't know how to display oop: {:#x}", raw);
+    }
 }
 
 unsafe extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
@@ -442,6 +504,10 @@ unsafe extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
     }
 
     panic!("panic_inline_sym: {}", InlineSym::from_word(w).as_str());
+}
+
+unsafe extern "C" fn full_gc(universe: &mut Universe, alloc_size: usize) -> usize {
+    universe.full_gc(alloc_size)
 }
 
 // Caller saved regs.

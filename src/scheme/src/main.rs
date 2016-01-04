@@ -37,6 +37,8 @@ fn run_file(path: &str) -> io::Result<()> {
         rust_entry(universe.as_ptr());
     }
 
+    universe.gc.print_stat();
+
     Ok(())
 }
 

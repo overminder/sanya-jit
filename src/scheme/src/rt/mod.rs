@@ -36,6 +36,7 @@ pub struct Universe {
     pub fixnum_info: InfoTable<Fixnum>,
 }
 
+// XXX: Those should be unsafe.
 impl Universe {
     pub fn new(heap_size: usize) -> Self {
         Universe {
@@ -81,6 +82,24 @@ impl Universe {
             let mut res = self.gc.alloc(&self.fixnum_info, &self.handle_block);
             res.value = value;
             res
+        }
+    }
+
+    pub fn full_gc(&mut self, alloc_size: usize) -> usize {
+        unsafe {
+            self.gc.prepare_collection(&mut self.handle_block);
+            for frame in self.iter_frame() {
+                for oop_slot in frame.iter_oop() {
+                    self.gc.scavenge(oop_slot);
+                }
+            }
+            self.gc.finish_collection();
+            if self.gc.available_spaces() < alloc_size {
+                panic!("GcState: failed to alloc {} bytes from compiled code.",
+                       alloc_size);
+            }
+
+            self.gc.unsafe_alloc(alloc_size)
         }
     }
 }

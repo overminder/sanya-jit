@@ -25,7 +25,7 @@ pub struct GcState {
 
     // Statistics.
     pub full_gc_count: usize,
-    pub scavenged_count: usize,
+    pub scavenged_ptr_count: usize,
 }
 
 unsafe fn was_scavenged_to(oop: &Closure) -> Option<Oop> {
@@ -54,7 +54,7 @@ impl GcState {
             copy_ptr: ptr::null_mut(),
 
             full_gc_count: 0,
-            scavenged_count: 0,
+            scavenged_ptr_count: 0,
         }
     }
 
@@ -78,7 +78,7 @@ impl GcState {
         }
 
         let copied_to = self.copy(closure);
-        self.scavenged_count += 1;
+        self.scavenged_ptr_count += 1;
         // println!("Scavenge: {:x} -> {:x}",
         // closure as *const _ as usize,
         // copied_to as *const _ as usize);
@@ -105,6 +105,14 @@ impl GcState {
         self.alloc_ptr = self.copy_ptr;
         self.alloc_limit = self.from_space.offset(self.space_size as isize);
         self.full_gc_count += 1;
+    }
+
+    pub unsafe fn unsafe_alloc(&mut self, size: usize) -> usize {
+        let ptr = self.alloc_ptr;
+        let advanced_to = self.alloc_ptr.offset(size as isize);
+        assert!(advanced_to <= self.alloc_limit);
+        self.alloc_ptr = advanced_to;
+        ptr as usize
     }
 
     pub unsafe fn try_alloc<A: IsOop>(&mut self,
@@ -146,6 +154,12 @@ impl GcState {
 
     pub fn available_spaces(&self) -> usize {
         (self.alloc_limit as usize) - (self.alloc_ptr as usize)
+    }
+
+    pub fn print_stat(&self) {
+        println!("GcState: full_gc_count = {}, scavenged_ptr_count = {}",
+                 self.full_gc_count,
+                 self.scavenged_ptr_count);
     }
 }
 

@@ -65,14 +65,14 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                     NPrimO(PrimOpO::PanicInlineSym,
                            box NMkFixnum(InlineSym::from_str(&val).unwrap().as_word() as isize))
                 }
-                [Sym(ref tag), ref e1, ref e2] => {
+                [Sym(ref tag), ref e1, ref e2] if is_prim_ff_op(tag) => {
                     let n1 = compile_expr(e1, frame, false);
                     let n2 = compile_expr(e2, frame, false);
                     match tag.as_ref() {
                         "+#" => NPrimFF(PrimOpFF::Add, box n1, box n2),
                         "-#" => NPrimFF(PrimOpFF::Sub, box n1, box n2),
                         "<#" => NPrimFF(PrimOpFF::Lt, box n1, box n2),
-                        _ => new_call(compile_expr(&es[0], frame, false), vec![n1, n2], is_tail),
+                        _ => panic!("{}: Not a PrimOpFF", tag),
                     }
                 }
                 [Sym(ref tag), ref e1, ref e2, ref e3] if tag == "if" => {
@@ -112,5 +112,12 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                 None => NReadGlobal(name.to_owned()),
             }
         }
+    }
+}
+
+fn is_prim_ff_op(s: &str) -> bool {
+    match s {
+        "+#" | "-#" | "<#" => true,
+        _ => false,
     }
 }
