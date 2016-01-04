@@ -1,11 +1,10 @@
 /// c0: The baseline compiler.
 
-mod stackmap;
-
-use self::stackmap::*;
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
+use rt::stackmap::StackMap;
+use rt::inlinesym::InlineSym;
 
 use assembler::x64::*;
 use assembler::x64::R64::*;
@@ -53,7 +52,7 @@ impl ModuleContext {
         // 1. Build up an entry.
         let mut entry = Label::new();
         let main = self.function_labels.get_mut("main").unwrap();
-        emit_nop_until_aligned(&mut self.emit, 0x16);
+        emit_nop_until_aligned(&mut self.emit, 0x10);
 
         self.emit
             .bind(&mut entry)
@@ -63,6 +62,7 @@ impl ModuleContext {
             .push(UNIVERSE_PTR)
             .push(STACKMAP_PTR)
             .add(RSP, -8)
+            .mov(&universe_base_rbp(), RBP)
             .mov(UNIVERSE_PTR, RDI)
             .mov(ALLOC_PTR, &universe_alloc_ptr())
             .mov(STACKMAP_PTR, 0_i64)
@@ -122,6 +122,12 @@ struct NodeCompiler<'a> {
     labels: &'a mut LabelMap,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum CallingConv {
+    Internal,
+    SyncUniverse,
+}
+
 impl<'a> NodeCompiler<'a> {
     fn new(emit: &'a mut Emit, labels: &'a mut LabelMap) -> Self {
         NodeCompiler {
@@ -130,7 +136,10 @@ impl<'a> NodeCompiler<'a> {
         }
     }
 
-    fn calling_out<F: FnMut(&mut Emit)>(&mut self, mut stackmap: StackMap, mut f: F) {
+    fn calling_out<F: FnMut(&mut Emit)>(&mut self,
+                                        mut stackmap: StackMap,
+                                        cconv: CallingConv,
+                                        mut f: F) {
         // Ensure the stack is 16-byte aligned after the call.
         let sp_changed = if (stackmap.len() + 1) & 1 == 1 {
             self.emit.add(RSP, -8);
@@ -143,13 +152,32 @@ impl<'a> NodeCompiler<'a> {
         // And materialize the stackmap, since we are calling out.
         self.emit.mov(STACKMAP_PTR, stackmap.as_word() as i64);
 
+        if cconv == CallingConv::SyncUniverse {
+            // Sync the runtime regs with the universe.
+            self.emit
+                .mov(&universe_alloc_ptr(), ALLOC_PTR)
+                .mov(&universe_saved_rbp(), RBP)
+                .mov(&universe_stackmap_ptr(), STACKMAP_PTR);
+        }
+
         // Do the actuall call.
         f(self.emit);
+
+        if cconv == CallingConv::SyncUniverse {
+            // Read back the runtime regs.
+            self.emit
+                .mov(ALLOC_PTR, &universe_alloc_ptr());
+        }
 
         // And restore the stack.
         if sp_changed {
             self.emit.add(RSP, 8);
         }
+    }
+
+    fn push_oop(&mut self, r: R64, stackmap: &mut StackMap) {
+        self.emit.push(r);
+        stackmap.push_gcptr();
     }
 
     fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
@@ -158,11 +186,12 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(RAX, i as i64);
             }
             &mut NCall { ref mut func, ref mut args, is_tail } => {
+                let mut precall_map = stackmap;
                 for arg in args.iter_mut().rev() {
-                    try!(self.compile(arg, stackmap));
-                    self.emit.push(RAX);
+                    try!(self.compile(arg, precall_map));
+                    self.push_oop(RAX, &mut precall_map);
                 }
-                try!(self.compile(func, stackmap));
+                try!(self.compile(func, precall_map));
 
                 for (r, _) in [RDI, RSI, RDX, RCX, R8, R9].iter().zip(args.iter()) {
                     self.emit.pop(*r);
@@ -171,7 +200,7 @@ impl<'a> NodeCompiler<'a> {
                     emit_epilogue(self.emit, false);
                     self.emit.jmp(RAX);
                 } else {
-                    self.calling_out(stackmap, |emit| {
+                    self.calling_out(stackmap, CallingConv::Internal, |emit| {
                         emit.call(RAX);
                     });
                 }
@@ -183,9 +212,10 @@ impl<'a> NodeCompiler<'a> {
                 let special_case = if let &mut NPrimFF(PrimOpFF::Lt, ref mut lhs, ref mut rhs) =
                                           cond.as_mut() {
                     if OPTIMIZE_IF_CMP {
-                        try!(self.compile(rhs, stackmap));
-                        self.emit.push(RAX);
-                        try!(self.compile(lhs, stackmap));
+                        let mut map0 = stackmap;
+                        try!(self.compile(rhs, map0));
+                        self.push_oop(RAX, &mut map0);
+                        try!(self.compile(lhs, map0));
                         self.emit
                             .pop(TMP)
                             .cmp(RAX, TMP)
@@ -235,9 +265,10 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(&frame_slot(ix), RAX);
             }
             &mut NPrimFF(ref op, ref mut n1, ref mut n2) => {
-                try!(self.compile(n2, stackmap));
-                self.emit.push(RAX);
-                try!(self.compile(n1, stackmap));
+                let mut map0 = stackmap;
+                try!(self.compile(n2, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(n1, map0));
 
                 match *op {
                     PrimOpFF::Add => {
@@ -273,8 +304,16 @@ impl<'a> NodeCompiler<'a> {
                         self.emit
                             .mov(RDI, RAX)
                             .mov(RAX, unsafe { transmute::<_, i64>(display_isize) });
-                        self.calling_out(stackmap, |emit| {
+                        self.calling_out(stackmap, CallingConv::Internal, |emit| {
                             emit.call(RAX);
+                        });
+                    }
+                    PrimOpO::PanicInlineSym => {
+                        self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+                            emit.mov(RDI, RAX)
+                                .mov(RSI, UNIVERSE_PTR)
+                                .mov(RAX, unsafe { transmute::<_, i64>(panic_inline_sym) })
+                                .call(RAX);
                         });
                     }
                 }
@@ -310,6 +349,18 @@ fn universe_alloc_ptr() -> Addr {
 
 fn universe_alloc_limit() -> Addr {
     Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_LIMIT)
+}
+
+fn universe_stackmap_ptr() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_STACKMAP_PTR)
+}
+
+fn universe_saved_rbp() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_SAVED_RBP)
+}
+
+fn universe_base_rbp() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_BASE_RBP)
 }
 
 fn frame_slot(ix: usize) -> Addr {
@@ -354,6 +405,13 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
 
 extern "C" fn display_isize(i: isize) {
     println!("display_isize: {}", i);
+}
+
+extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
+    // Unwind the stack.
+    // universe.
+
+    panic!("panic_inline_sym: {}", InlineSym::from_word(w).as_str());
 }
 
 // Caller saved regs.

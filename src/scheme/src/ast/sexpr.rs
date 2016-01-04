@@ -67,6 +67,7 @@ fn parse_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
         *i += 1;
         match x {
             '(' => return parse_list_at(xs, i),
+            '\'' => return Ok(quoted("quote", try!(parse_at(xs, i)))),
             _ if x.is_whitespace() => continue,
             _ if x.is_numeric() => {
                 *i -= 1;
@@ -79,6 +80,10 @@ fn parse_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
         }
     }
     Err(Error::NothingParsed)
+}
+
+fn quoted(tag: &str, e: SExpr) -> SExpr {
+    list(&[sym(tag), e])
 }
 
 fn parse_int_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {

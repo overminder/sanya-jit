@@ -2,6 +2,7 @@ use super::sexpr::*;
 use super::sexpr::SExpr::*;
 use super::nir::*;
 use super::nir::RawNode::*;
+use rt::inlinesym::InlineSym;
 
 fn unwrap_sym_list(e: &SExpr) -> Result<Vec<String>, String> {
     let es = try!(e.unwrap_list());
@@ -59,6 +60,10 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                 }
                 [Sym(ref tag), ref e1] if tag == "display#" => {
                     NPrimO(PrimOpO::Display, box compile_expr(e1, frame, false))
+                }
+                [Sym(ref tag), Sym(ref val)] if tag == "panic-inline-sym#" => {
+                    NPrimO(PrimOpO::PanicInlineSym,
+                           box NMkFixnum(InlineSym::from_str(&val).unwrap().as_word() as isize))
                 }
                 [Sym(ref tag), ref e1, ref e2] => {
                     let n1 = compile_expr(e1, frame, false);

@@ -2,17 +2,33 @@
 
 pub mod oop;
 pub mod gc;
+pub mod inlinesym;
+pub mod stackmap;
 
 use self::oop::*;
 use self::gc::GcState;
+use self::stackmap::StackMap;
 
-// XXX: Rustc doesn't have offsetof yet.
-pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 0;
-pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 8;
+// XXX: Use offsetof after https://github.com/rust-lang/rfcs/issues/1144 is implemented.
+pub const OFFSET_OF_UNIVERSE_STACKMAP_PTR: i32 = 0 * 8;
+pub const OFFSET_OF_UNIVERSE_SAVED_RBP: i32 = 1 * 8;
+pub const OFFSET_OF_UNIVERSE_BASE_RBP: i32 = 2 * 8;
+pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 3 * 8;
+pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 4 * 8;
 
 #[repr(C)]
 pub struct Universe {
+    // The caller's stackmap, used for traversing the stack.
+    stackmap: StackMap,
+
+    // The caller's rbp, used for traversing the stack.
+    saved_rbp: usize,
+
+    // The frame below the compiled main function. Stack traversal stops here.
+    base_rbp: usize,
+
     pub gc: GcState,
+
     handle_block: Box<HandleBlock>,
 
     // Well-known info tables.
@@ -23,7 +39,11 @@ pub struct Universe {
 impl Universe {
     pub fn new(heap_size: usize) -> Self {
         Universe {
+            stackmap: StackMap::new(),
+            saved_rbp: 0,
+            base_rbp: 0,
             gc: unsafe { GcState::new(heap_size) },
+
             handle_block: HandleBlock::new(),
 
             pair_info: infotable_for_pair(),

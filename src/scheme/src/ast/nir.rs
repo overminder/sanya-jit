@@ -111,6 +111,7 @@ pub enum RawNode {
 #[derive(Debug)]
 pub enum PrimOpO {
     Display,
+    PanicInlineSym,
 }
 
 #[derive(Debug)]
