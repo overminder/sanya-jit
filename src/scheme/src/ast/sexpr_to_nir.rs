@@ -88,18 +88,24 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                     panic!("compile_expr: nil");
                 }
                 _ => {
+                    // Special forms.
                     if let &Sym(ref tag) = &es[0] {
                         if tag == "begin" {
-                            if es.len() == 1 {
-                                // Unspecified
-                                return NMkFixnum(-1);
-                            }
+                            assert!(es.len() > 1);
                             let body: Vec<_> = es[1..es.len() - 1]
                                                    .iter()
                                                    .map(|e| compile_expr(e, frame, false))
                                                    .collect();
                             let last = box compile_expr(es.last().unwrap(), frame, is_tail);
                             return NSeq(body, last);
+                        }
+                        else if tag == "and" {
+                            assert!(es.len() == 3);
+                            return NIf {
+                                cond: box compile_expr(&es[1], frame, false),
+                                on_true: box compile_expr(&es[2], frame, is_tail),
+                                on_false: box NMkFixnum(0),
+                            };
                         }
                     }
                     let func = compile_expr(&es[0], frame, false);

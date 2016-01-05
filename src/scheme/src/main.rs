@@ -29,10 +29,7 @@ fn run_file(path: &str) -> io::Result<()> {
 
     lint_scdefns(&mut scdefns).unwrap();
     let mut ctx = ModuleContext::new();
-    for scdefn in scdefns {
-        ctx.add_scdefn(scdefn);
-    }
-    let rust_entry = ctx.compile_all(&mut universe);
+    let rust_entry = ctx.compile(scdefns, &mut universe);
     unsafe {
         rust_entry(universe.as_ptr());
     }

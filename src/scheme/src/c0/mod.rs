@@ -3,8 +3,8 @@
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
-use rt::oop::{Closure, Fixnum, IsOop};
-use rt::stackmap::StackMap;
+use rt::oop::{Closure, Fixnum, IsOop, InfoTable};
+use rt::stackmap::{StackMap, StackMapTable};
 use rt::inlinesym::InlineSym;
 
 use assembler::x64::*;
@@ -15,41 +15,76 @@ use assembler::mem::JitMem;
 use std::collections::HashMap;
 use std::mem::transmute;
 
+pub type JitEntry = unsafe extern "C" fn(*const Universe);
+
 pub struct ModuleContext {
-    functions: HashMap<String, FunctionContext>,
-    function_labels: LabelMap,
-    emit: Emit,
     jitmem: Option<JitMem>,
 }
-
-type LabelMap = HashMap<String, Label>;
 
 impl ModuleContext {
     pub fn new() -> Self {
         ModuleContext {
-            functions: HashMap::new(),
-            function_labels: HashMap::new(),
-            emit: Emit::new(),
             jitmem: None,
         }
     }
 
-    pub fn add_scdefn(&mut self, sc: ScDefn) {
+    pub fn compile(&mut self, scdefns: Vec<ScDefn>, universe: &mut Universe) -> JitEntry {
+        let mut cc = ModuleCompiler::new();
+        for scdefn in scdefns {
+            cc.add_scdefn(scdefn);
+        }
+        let entry_offset = {
+            let (code, entry_offset) = cc.compile_all(universe);
+            self.jitmem = Some(JitMem::new(code));
+            entry_offset
+        };
+        let start = unsafe { self.jitmem.as_ref().unwrap().start() };
+        let ModuleCompiler { mut smt, .. } = cc;
+        smt.set_start(start);
+        universe.smt = Some(smt);
+
+        unsafe { transmute(start + entry_offset) }
+    }
+}
+
+struct ModuleCompiler {
+    functions: HashMap<String, FunctionContext>,
+    function_labels: LabelMap,
+    smt: StackMapTable,
+    emit: Emit,
+}
+
+type LabelMap = HashMap<String, Label>;
+
+impl ModuleCompiler {
+    fn new() -> Self {
+        ModuleCompiler {
+            functions: HashMap::new(),
+            function_labels: HashMap::new(),
+            smt: StackMapTable::new(),
+            emit: Emit::new(),
+        }
+    }
+
+    fn add_scdefn(&mut self, sc: ScDefn) {
         self.function_labels.insert(sc.name().to_owned(), Label::new());
         self.functions.insert(sc.name().to_owned(), FunctionContext::new(sc));
     }
 
-    pub fn compile_all(&mut self, u: &mut Universe) -> JitEntry {
+    fn compile_all(&mut self, u: &mut Universe) -> (&[u8], usize) {
         // 1. Compile each function.
         for (_, ref mut f) in &mut self.functions {
-            f.compile(&mut self.emit, &mut self.function_labels, u);
+            f.compile(&mut self.emit,
+                      &mut self.function_labels,
+                      &mut self.smt,
+                      u);
         }
 
         // 2. Make a rust -> jitted main entry
-        unsafe { transmute::<usize, JitEntry>(self.make_rust_entry(u)) }
+        self.make_rust_entry(u)
     }
 
-    fn make_rust_entry(&mut self, _u: &mut Universe) -> usize {
+    fn make_rust_entry(&mut self, _u: &mut Universe) -> (&[u8], usize) {
         // 1. Build up an entry.
         let mut entry = Label::new();
         let main = self.function_labels.get_mut("main").unwrap();
@@ -97,21 +132,11 @@ impl ModuleContext {
             .ret();
 
         // 2. Get it.
-        let entry_offset = entry.offset().unwrap();
-        let jitmem = JitMem::new(self.emit.as_ref());
-        self.jitmem = Some(jitmem);
-        let start = unsafe { self.jitmem.as_ref().unwrap().start() };
-        println!("compile_all: entry = {:#x}, len = {}",
-                 start,
-                 self.emit.here());
-
-        start + entry_offset
+        (self.emit.as_ref(), entry.offset().unwrap())
     }
 }
 
-pub type JitEntry = unsafe extern "C" fn(*const Universe);
-
-pub struct FunctionContext {
+struct FunctionContext {
     scdefn: ScDefn,
 }
 
@@ -120,7 +145,11 @@ impl FunctionContext {
         FunctionContext { scdefn: sc }
     }
 
-    fn compile(&mut self, emit: &mut Emit, labels: &mut LabelMap, u: &Universe) {
+    fn compile(&mut self,
+               emit: &mut Emit,
+               labels: &mut LabelMap,
+               smt: &mut StackMapTable,
+               u: &Universe) {
         // Align the function entry.
         // XXX: I'm not sure if this is correct - need to read the AMD64 ABI
         // doc for the correct alignment.
@@ -132,7 +161,10 @@ impl FunctionContext {
         emit_prologue(emit, self.scdefn.frame_descr().slot_count());
 
         let stackmap = new_stackmap_with_frame_descr(self.scdefn.frame_descr());
-        NodeCompiler::new(emit, labels, u).compile(self.scdefn.body_mut(), stackmap).unwrap();
+        {
+            let mut nodecc = NodeCompiler::new(emit, labels, smt, u);
+            nodecc.compile(self.scdefn.body_mut(), stackmap).unwrap();
+        }
 
         emit_epilogue(emit, true);
     }
@@ -143,6 +175,7 @@ struct NodeCompiler<'a> {
     emit: &'a mut Emit,
     labels: &'a mut LabelMap,
     universe: &'a Universe,
+    smt: &'a mut StackMapTable,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -152,14 +185,20 @@ enum CallingConv {
 }
 
 impl<'a> NodeCompiler<'a> {
-    fn new(emit: &'a mut Emit, labels: &'a mut LabelMap, universe: &'a Universe) -> Self {
+    fn new(emit: &'a mut Emit,
+           labels: &'a mut LabelMap,
+           smt: &'a mut StackMapTable,
+           universe: &'a Universe) -> Self {
         NodeCompiler {
             emit: emit,
             labels: labels,
             universe: universe,
+            smt: smt,
         }
     }
 
+    // Might clobber anything except %rax and the arg registers.
+    // `f` should really only just do the call.
     fn calling_out<F: FnMut(&mut Emit)>(&mut self,
                                         mut stackmap: StackMap,
                                         cconv: CallingConv,
@@ -176,16 +215,23 @@ impl<'a> NodeCompiler<'a> {
         // And materialize the stackmap, since we are calling out.
         self.emit.mov(STACKMAP_PTR, stackmap.as_word() as i64);
 
+        let mut label_ret_addr = Label::new();
+
         if cconv == CallingConv::SyncUniverse {
             // Sync the runtime regs with the universe.
             self.emit
                 .mov(&universe_alloc_ptr(), ALLOC_PTR)
                 .mov(&universe_saved_rbp(), RBP)
+                .lea(TMP, &mut label_ret_addr)
+                .mov(&universe_saved_rip(), TMP)
                 .mov(&universe_stackmap_ptr(), STACKMAP_PTR);
         }
 
         // Do the actuall call.
         f(self.emit);
+        self.emit.bind(&mut label_ret_addr);
+
+        self.smt.insert(label_ret_addr.offset().unwrap(), stackmap);
 
         if cconv == CallingConv::SyncUniverse {
             // Read back the runtime regs.
@@ -341,18 +387,20 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(n1, stackmap));
                 match *op {
                     PrimOpO::Display => {
+                        self.emit
+                            .mov(RDI, RAX)
+                            .mov(RSI, UNIVERSE_PTR);
                         self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                            emit.mov(RDI, RAX)
-                                .mov(RSI, UNIVERSE_PTR)
-                                .mov(RAX, unsafe { transmute::<_, i64>(display_oop) })
+                            emit.mov(RAX, unsafe { transmute::<_, i64>(display_oop) })
                                 .call(RAX);
                         });
                     }
                     PrimOpO::PanicInlineSym => {
+                        self.emit
+                            .mov(RDI, RAX)
+                            .mov(RSI, UNIVERSE_PTR);
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(RDI, RAX)
-                                .mov(RSI, UNIVERSE_PTR)
-                                .mov(RAX, unsafe { transmute::<_, i64>(panic_inline_sym) })
+                            emit.mov(RAX, unsafe { transmute::<_, i64>(panic_inline_sym) })
                                 .call(RAX);
                         });
                     }
@@ -394,12 +442,11 @@ impl<'a> NodeCompiler<'a> {
 
         // Slow case: sync the runtime state and call out for GC.
         self.emit
-            .sub(ALLOC_PTR, alloc_size);
-
+            .sub(ALLOC_PTR, alloc_size)
+            .mov(RDI, UNIVERSE_PTR)
+            .mov(RSI, alloc_size as i64);
         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-            emit.mov(RDI, UNIVERSE_PTR)
-                .mov(RSI, alloc_size as i64)
-                .mov(RAX, unsafe { transmute::<_, i64>(full_gc) })
+            emit.mov(RAX, unsafe { transmute::<_, i64>(full_gc) })
                 .call(RAX);
         });
         // Falls through.
@@ -440,6 +487,10 @@ fn universe_alloc_limit() -> Addr {
 
 fn universe_stackmap_ptr() -> Addr {
     Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_STACKMAP_PTR)
+}
+
+fn universe_saved_rip() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_SAVED_RIP)
 }
 
 fn universe_saved_rbp() -> Addr {
@@ -490,20 +541,19 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     m
 }
 
-unsafe extern "C" fn display_oop(raw: usize, universe: &Universe) {
-    let oop = Closure::from_raw(raw);
+unsafe extern "C" fn display_oop(oop: &Closure, universe: &Universe) {
     if universe.oop_is_fixnum(oop) {
         println!("display_oop: Fixnum {}", oop.oop_cast::<Fixnum>().value);
     } else {
-        panic!("Doesn't know how to display oop: {:#x}", raw);
+        panic!("Doesn't know how to display oop: {:#x}", oop.as_word());
     }
 }
 
-unsafe extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
+unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {
     // Unwind the stack.
-    let reason = InlineSym::from_word(w);
+    let reason = InlineSym::from_word(f.value as usize);
     println!("Panic (cause = {}), Unwinding the stack.", reason.as_str());
-    for (frame_no, frame) in (0..).zip(universe.iter_frame()) {
+    for (frame_no, frame) in (0..).zip(universe.iter_frame(&universe.smt)) {
         println!("Frame {}: {:?}", frame_no, frame);
         for (slot_no, oop_slot) in (0..).zip(frame.iter_oop()) {
             let oop = *oop_slot;
@@ -514,7 +564,7 @@ unsafe extern "C" fn panic_inline_sym(w: usize, universe: &Universe) {
         }
     }
 
-    panic!("panic_inline_sym: {}", InlineSym::from_word(w).as_str());
+    panic!("panic_inline_sym: {}", reason.as_str());
 }
 
 unsafe extern "C" fn full_gc(universe: &mut Universe, alloc_size: usize) -> usize {

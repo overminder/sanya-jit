@@ -1,6 +1,7 @@
-use std::mem::transmute;
-
 use super::oop::Oop;
+
+use std::mem::transmute;
+use std::collections::HashMap;
 
 // Could also use contain-rs's bit-set crate, but this impl is sufficient now.
 fn bitset_get(bs: &[u8], ix: usize) -> bool {
@@ -15,11 +16,42 @@ fn bitset_set(bs: &mut [u8], ix: usize, value: bool) {
     }
 }
 
+unsafe fn read_word(ptr: usize, offset: isize) -> usize {
+    *(((ptr as isize) + offset) as *const usize)
+}
+
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct StackMap {
     length: u8,
     encoding: [u8; 7],
+}
+
+// Maps the rip offsets for return addresses to stackmaps.
+pub struct StackMapTable {
+    start: Option<usize>,
+    offsets: HashMap<usize, StackMap>,
+}
+
+impl StackMapTable {
+    pub fn new() -> Self {
+        StackMapTable {
+            start: None,
+            offsets: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, offset: usize, sm: StackMap) {
+        self.offsets.insert(offset, sm);
+    }
+
+    pub fn set_start(&mut self, start: usize) {
+        self.start = Some(start);
+    }
+
+    pub fn get(&self, rip: usize) -> Option<&StackMap> {
+        self.offsets.get(&(rip - self.start.unwrap()))
+    }
 }
 
 // Could also simply use boxed closures to reduce LoC but the performance
@@ -108,25 +140,30 @@ impl StackMap {
 #[derive(Copy, Clone, Debug)]
 pub struct Frame {
     rbp: usize,
+    rip: usize,
     stackmap: StackMap,
 }
 
 impl Frame {
-    pub fn new(rbp: usize, stackmap: StackMap) -> Self {
+    pub fn new(rbp: usize, rip: usize, stackmap: StackMap) -> Self {
         Frame {
             rbp: rbp,
+            rip: rip,
             stackmap: stackmap,
         }
     }
 
-    unsafe fn prev(&self, until_rbp: usize) -> Option<Self> {
-        let prev_rbp = *(self.rbp as *const usize);
+    unsafe fn prev(&self, smt: &StackMapTable, until_rbp: usize) -> Option<Self> {
+        let prev_rbp = read_word(self.rbp, 0);
+        let prev_rip = read_word(self.rbp, 8);
         if prev_rbp >= until_rbp {
             assert_eq!(prev_rbp, until_rbp);
             None
         } else {
-            let next_stackmap = *((self.rbp - 8) as *const usize);
-            Some(Frame::new(prev_rbp, StackMap::reify_word(next_stackmap)))
+            let next_stackmap = StackMap::reify_word(read_word(self.rbp, -8));
+            let map2 = smt.get(prev_rip).unwrap();
+            assert_eq!(*map2, next_stackmap);
+            Some(Frame::new(prev_rbp, prev_rip, next_stackmap))
         }
     }
 
@@ -138,26 +175,28 @@ impl Frame {
     }
 }
 
-pub struct FrameIterator {
+pub struct FrameIterator<'a> {
     frame: Option<Frame>,
     until_rbp: usize,
+    smt: &'a StackMapTable,
 }
 
-impl FrameIterator {
-    pub fn new(rbp: usize, stackmap: StackMap, until_rbp: usize) -> Self {
+impl<'a> FrameIterator<'a> {
+    pub fn new(rbp: usize, rip: usize, smt: &'a StackMapTable, stackmap: StackMap, until_rbp: usize) -> Self {
         FrameIterator {
-            frame: Some(Frame::new(rbp, stackmap)),
+            frame: Some(Frame::new(rbp, rip, stackmap)),
             until_rbp: until_rbp,
+            smt: smt,
         }
     }
 }
 
-impl Iterator for FrameIterator {
+impl<'a> Iterator for FrameIterator<'a> {
     type Item = Frame;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(frame) = self.frame.take() {
-            self.frame = unsafe { frame.prev(self.until_rbp) };
+            self.frame = unsafe { frame.prev(self.smt, self.until_rbp) };
             Some(frame)
         } else {
             None

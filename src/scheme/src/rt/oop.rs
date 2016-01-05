@@ -18,13 +18,20 @@ pub fn sizeof_ptrs(nptrs: usize) -> usize {
     nptrs * 8
 }
 
+#[repr(u16)]
+#[derive(Eq, PartialEq)]
+pub enum OopKind {
+    Plain,
+    Callable,
+    OopArray,
+}
+
 #[repr(C)]
 pub struct InfoTable<A> {
     ptr_payloads: u16, // GC ptrs
     word_payloads: u16, // Unmanaged qwords
     arity: u16,
-    callable: u8,
-    has_vararg: u8,
+    kind: OopKind,
     name: *const u8,
     entry: [u8; 0],
     phantom_data: PhantomData<A>,
@@ -37,8 +44,31 @@ impl<A> Debug for InfoTable<A> {
 }
 
 impl<A> InfoTable<A> {
+    pub fn new(ptr_payloads: u16, word_payloads: u16, arity: u16,
+               kind: OopKind, name: &'static str) -> Self {
+        InfoTable {
+            ptr_payloads: ptr_payloads,
+            word_payloads: word_payloads,
+            arity: arity,
+            kind: kind,
+            name: name.as_ptr(),
+            entry: [],
+            phantom_data: PhantomData,
+        }
+    }
+
     pub fn sizeof_instance(&self) -> usize {
+        assert!(!self.is_array());
         sizeof_ptrs(self.ptr_payloads as usize + self.word_payloads as usize + 1)
+    }
+
+    pub fn sizeof_array_instance(&self, size: usize) -> usize {
+        assert!(self.is_array());
+        sizeof_ptrs(size + 2)
+    }
+
+    pub fn is_array(&self) -> bool {
+        self.kind == OopKind::OopArray
     }
 
     pub fn name(&self) -> &'static str {
@@ -54,13 +84,12 @@ impl<A> InfoTable<A> {
     }
 }
 
-fn mk_infotable_for_data<A>(nptrs: u16, nwords: u16, name: &'static str) -> InfoTable<A> {
+fn mk_infotable_for_data<A>(nptrs: u16, nwords: u16, name: &'static str, kind: OopKind) -> InfoTable<A> {
     InfoTable {
         ptr_payloads: nptrs,
         word_payloads: nwords,
         arity: 0,
-        callable: 0,
-        has_vararg: 0,
+        kind: kind,
         name: name.as_ptr(),
         phantom_data: PhantomData,
         entry: [],
@@ -68,11 +97,15 @@ fn mk_infotable_for_data<A>(nptrs: u16, nwords: u16, name: &'static str) -> Info
 }
 
 pub fn infotable_for_pair() -> InfoTable<Pair> {
-    mk_infotable_for_data(2, 0, "<Pair>")
+    mk_infotable_for_data(2, 0, "<Pair>", OopKind::Plain)
 }
 
 pub fn infotable_for_fixnum() -> InfoTable<Fixnum> {
-    mk_infotable_for_data(0, 1, "<Fixnum>")
+    mk_infotable_for_data(0, 1, "<Fixnum>", OopKind::Plain)
+}
+
+pub fn infotable_for_ooparray() -> InfoTable<OopArray> {
+    mk_infotable_for_data(0, 0, "<OopArray>", OopKind::OopArray)
 }
 
 /// A Closure is not exactly an ordinary callable object in the narrow sense -
@@ -137,6 +170,23 @@ pub struct Pair {
     pub cdr: Oop,
 }
 
+#[repr(C)]
+pub struct OopArray {
+    info: *const (),
+    pub len: usize,
+    pub content: [Oop; 0],
+}
+
+impl OopArray {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub unsafe fn content(&self) -> &mut [Oop] {
+        slice::from_raw_parts_mut(self.content.as_ptr() as *mut _, self.len)
+    }
+}
+
 // Doubly-linked list of oops. Used to manage root of stacks.
 
 pub struct RawHandle<A> {
@@ -166,6 +216,7 @@ pub trait IsOop : Sized {
 impl IsOop for Closure {}
 impl IsOop for Fixnum {}
 impl IsOop for Pair {}
+impl IsOop for OopArray {}
 
 impl HandleBlock {
     pub fn new() -> Box<HandleBlock> {

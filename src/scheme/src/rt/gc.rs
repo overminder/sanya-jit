@@ -59,7 +59,12 @@ impl GcState {
     }
 
     unsafe fn copy<'a>(&mut self, oop: &Closure) -> &'a Closure {
-        let count = oop.info().sizeof_instance();
+        let info = oop.info();
+        let count = if info.is_array() {
+            info.sizeof_array_instance(oop.oop_cast::<OopArray>().len())
+        } else {
+            info.sizeof_instance()
+        };
         ptr::copy(transmute(oop), self.copy_ptr, count);
         let copied_to = Closure::from_raw(self.copy_ptr as Oop);
         self.copy_ptr = self.copy_ptr.offset(count as isize);
@@ -88,8 +93,14 @@ impl GcState {
         // And mutate the location.
         *oop = copied_to.as_oop();
 
-        for ptr in copied_to.ptr_payloads() {
-            self.scavenge(ptr);
+        if copied_to.info().is_array() {
+            for ptr in copied_to.oop_cast::<OopArray>().content() {
+                self.scavenge(ptr);
+            }
+        } else {
+            for ptr in copied_to.ptr_payloads() {
+                self.scavenge(ptr);
+            }
         }
     }
 
@@ -107,9 +118,9 @@ impl GcState {
         self.full_gc_count += 1;
     }
 
-    pub unsafe fn unsafe_alloc(&mut self, size: usize) -> usize {
+    pub unsafe fn unsafe_alloc(&mut self, alloc_size: usize) -> usize {
         let ptr = self.alloc_ptr;
-        let advanced_to = self.alloc_ptr.offset(size as isize);
+        let advanced_to = self.alloc_ptr.offset(alloc_size as isize);
         assert!(advanced_to <= self.alloc_limit);
         self.alloc_ptr = advanced_to;
         ptr as usize
@@ -117,11 +128,11 @@ impl GcState {
 
     pub unsafe fn try_alloc<A: IsOop>(&mut self,
                                       info: &InfoTable<A>,
+                                      alloc_size: usize,
                                       handle_block: &HandleBlock)
                                       -> Option<Handle<A>> {
         let ptr = self.alloc_ptr;
-        let size = info.sizeof_instance();
-        let advanced_to = self.alloc_ptr.offset(size as isize);
+        let advanced_to = self.alloc_ptr.offset(alloc_size as isize);
         // Overflow? Should really happen here...
         if advanced_to > self.alloc_limit {
             None
@@ -133,23 +144,37 @@ impl GcState {
         }
     }
 
+    unsafe fn alloc_with_size<A: IsOop>(&mut self,
+                                        info: &InfoTable<A>,
+                                        alloc_size: usize,
+                                        handle_block: &HandleBlock) -> Handle<A> {
+        if let Some(h) = self.try_alloc(info, alloc_size, handle_block) {
+            h
+        } else {
+            self.prepare_collection(handle_block);
+            // Assumes no other root exists.
+            self.finish_collection();
+            if self.available_spaces() < alloc_size {
+                panic!("GcState: failed to alloc {} bytes for {:?}", alloc_size, info);
+            } else {
+                self.try_alloc(info, alloc_size, handle_block).unwrap()
+            }
+        }
+    }
+
     pub unsafe fn alloc<A: IsOop>(&mut self,
                                   info: &InfoTable<A>,
                                   handle_block: &HandleBlock)
                                   -> Handle<A> {
-        if let Some(h) = self.try_alloc(info, handle_block) {
-            h
-        } else {
-            let size = info.sizeof_instance();
-            self.prepare_collection(handle_block);
-            // Assumes no other root exists.
-            self.finish_collection();
-            if self.available_spaces() < size {
-                panic!("GcState: failed to alloc {} bytes for {:?}", size, info);
-            } else {
-                self.try_alloc(info, handle_block).unwrap()
-            }
-        }
+        self.alloc_with_size(info, info.sizeof_instance(), handle_block)
+    }
+
+    pub unsafe fn alloc_array<A: IsOop>(&mut self,
+                                        info: &InfoTable<A>,
+                                        len: usize,
+                                        handle_block: &HandleBlock) -> Handle<A> {
+        let alloc_size = info.sizeof_array_instance(len);
+        self.alloc_with_size(info, alloc_size, handle_block)
     }
 
     pub fn available_spaces(&self) -> usize {
@@ -179,9 +204,9 @@ mod tests {
             let handle_block = HandleBlock::new();
 
             // (In-order scavenging).
-            let mut p1 = gc.try_alloc(&pair_info, &handle_block).unwrap();
-            let mut i1 = gc.try_alloc(&fixnum_info, &handle_block).unwrap();
-            let mut i2 = gc.try_alloc(&fixnum_info, &handle_block).unwrap();
+            let mut p1 = gc.alloc(&pair_info, &handle_block);
+            let mut i1 = gc.alloc(&fixnum_info, &handle_block);
+            let mut i2 = gc.alloc(&fixnum_info, &handle_block);
 
             i1.value = 999;
             i2.value = 888;

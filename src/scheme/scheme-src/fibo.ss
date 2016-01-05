@@ -1,10 +1,3 @@
-;; XXX: Not lazy.
-(define and
-  (lambda (a b)
-    (if a
-        b
-        0)))
-
 (define <
   (lambda (a b)
     (if (and (fixnum?# a)
