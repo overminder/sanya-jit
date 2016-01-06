@@ -23,13 +23,14 @@ fn run_file(path: &str) -> io::Result<()> {
     let mut universe = Universe::new(0x10000);
 
     let es = parse_many(&src).unwrap();
-    println!("Parsed sexpr: {:?}", es);
+    // println!("Parsed sexpr: {:?}", es);
     let mut scdefns: Vec<ScDefn> = es.iter().map(|e| compile_scdefn(e)).collect();
-    println!("Compiled scdefns: {:?}", scdefns);
+    // println!("Compiled scdefns: {:?}", scdefns);
 
     lint_scdefns(&mut scdefns).unwrap();
     let mut ctx = ModuleContext::new();
     let rust_entry = ctx.compile(scdefns, &mut universe);
+    // println!("smt = {:?}", universe.smt);
     unsafe {
         rust_entry(universe.as_ptr());
     }

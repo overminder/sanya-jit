@@ -4,7 +4,7 @@ use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
 use rt::oop::{Closure, Fixnum, IsOop, InfoTable};
-use rt::stackmap::{StackMap, StackMapTable};
+use rt::stackmap::{StackMap, StackMapTable, EXTRA_CALLER_SAVED_FRAME_SLOTS};
 use rt::inlinesym::InlineSym;
 
 use assembler::x64::*;
@@ -23,9 +23,7 @@ pub struct ModuleContext {
 
 impl ModuleContext {
     pub fn new() -> Self {
-        ModuleContext {
-            jitmem: None,
-        }
+        ModuleContext { jitmem: None }
     }
 
     pub fn compile(&mut self, scdefns: Vec<ScDefn>, universe: &mut Universe) -> JitEntry {
@@ -74,10 +72,7 @@ impl ModuleCompiler {
     fn compile_all(&mut self, u: &mut Universe) -> (&[u8], usize) {
         // 1. Compile each function.
         for (_, ref mut f) in &mut self.functions {
-            f.compile(&mut self.emit,
-                      &mut self.function_labels,
-                      &mut self.smt,
-                      u);
+            f.compile(&mut self.emit, &mut self.function_labels, &mut self.smt, u);
         }
 
         // 2. Make a rust -> jitted main entry
@@ -99,16 +94,13 @@ impl ModuleCompiler {
         // Save the callee-saved regs clobbered by our runtime.
         self.emit
             .push(ALLOC_PTR)
-            .push(UNIVERSE_PTR)
-            .push(STACKMAP_PTR)
-            .add(RSP, -8);  // And align the stack.
+            .push(UNIVERSE_PTR);
 
         // Get the relevant regs from/to the runtime state.
         self.emit
             .mov(UNIVERSE_PTR, RDI)
             .mov(&universe_base_rbp(), RBP)
-            .mov(ALLOC_PTR, &universe_alloc_ptr())
-            .mov(STACKMAP_PTR, 0_i64);
+            .mov(ALLOC_PTR, &universe_alloc_ptr());
 
         // Enter the real main.
         self.emit
@@ -120,8 +112,6 @@ impl ModuleCompiler {
 
         // Restore the saved regs.
         self.emit
-            .add(RSP, 8)
-            .pop(STACKMAP_PTR)
             .pop(UNIVERSE_PTR)
             .pop(ALLOC_PTR);
 
@@ -158,6 +148,9 @@ impl FunctionContext {
         // Bind the function entry. The unwrap here is safe the ModuleContext
         // has already initialized all the labels in the label map.
         emit.bind(labels.get_mut(self.scdefn.name()).unwrap());
+        // println!("Function {}'s offset is {}",
+        //         self.scdefn.name(),
+        //         labels.get(self.scdefn.name()).unwrap().offset().unwrap());
         emit_prologue(emit, self.scdefn.frame_descr().slot_count());
 
         let stackmap = new_stackmap_with_frame_descr(self.scdefn.frame_descr());
@@ -188,7 +181,8 @@ impl<'a> NodeCompiler<'a> {
     fn new(emit: &'a mut Emit,
            labels: &'a mut LabelMap,
            smt: &'a mut StackMapTable,
-           universe: &'a Universe) -> Self {
+           universe: &'a Universe)
+           -> Self {
         NodeCompiler {
             emit: emit,
             labels: labels,
@@ -204,16 +198,13 @@ impl<'a> NodeCompiler<'a> {
                                         cconv: CallingConv,
                                         mut f: F) {
         // Ensure the stack is 16-byte aligned after the call.
-        let sp_changed = if (stackmap.len() + 1) & 1 == 1 {
+        let sp_changed = if (stackmap.len() + EXTRA_CALLER_SAVED_FRAME_SLOTS) & 1 == 1 {
             self.emit.add(RSP, -8);
             stackmap.push_word();
             true
         } else {
             false
         };
-
-        // And materialize the stackmap, since we are calling out.
-        self.emit.mov(STACKMAP_PTR, stackmap.as_word() as i64);
 
         let mut label_ret_addr = Label::new();
 
@@ -223,8 +214,7 @@ impl<'a> NodeCompiler<'a> {
                 .mov(&universe_alloc_ptr(), ALLOC_PTR)
                 .mov(&universe_saved_rbp(), RBP)
                 .lea(TMP, &mut label_ret_addr)
-                .mov(&universe_saved_rip(), TMP)
-                .mov(&universe_stackmap_ptr(), STACKMAP_PTR);
+                .mov(&universe_saved_rip(), TMP);
         }
 
         // Do the actuall call.
@@ -461,32 +451,12 @@ impl<'a> NodeCompiler<'a> {
 
 // Misc
 
-/// Frame Layout:
-///
-/// Higher Addr
-/// ^
-/// | ix                         | value
-/// +----------------------------+------------
-/// | rbp + 8                    | ret addr
-/// | rbp                        | saved rbp
-/// | rbp - 8                    | saved StackMap.as_word
-/// | rbp - (8 + 8 * local_ix)   | local variable slots
-/// | rsp + N ~ rsp              | local tmps (might contain an alignment slot)
-///
-/// Stack Map:
-/// A stackmap contains all the local variables and tmps.
-/// rbp - stackmap.len() * 8 points to the saved stackmap.
-
 fn universe_alloc_ptr() -> Addr {
     Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_PTR)
 }
 
 fn universe_alloc_limit() -> Addr {
     Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_LIMIT)
-}
-
-fn universe_stackmap_ptr() -> Addr {
-    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_STACKMAP_PTR)
 }
 
 fn universe_saved_rip() -> Addr {
@@ -502,18 +472,12 @@ fn universe_base_rbp() -> Addr {
 }
 
 fn frame_slot(ix: usize) -> Addr {
-    // rbp[ix*8-16] since rbp[-8] is used to save the caller's stackmap.
-    Addr::BD(RBP, -8 * (2 + ix as i32))
-}
-
-fn saved_stackmap() -> Addr {
-    Addr::BD(RBP, -8)
+    Addr::BD(RBP, -8 * ((1 + EXTRA_CALLER_SAVED_FRAME_SLOTS + ix) as i32))
 }
 
 fn emit_prologue(emit: &mut Emit, frame_slots: usize) {
     emit.push(RBP)
-        .mov(RBP, RSP)
-        .push(STACKMAP_PTR);
+        .mov(RBP, RSP);
 
     if frame_slots != 0 {
         emit.add(RSP, -8 * (frame_slots as i32));
@@ -521,8 +485,7 @@ fn emit_prologue(emit: &mut Emit, frame_slots: usize) {
 }
 
 fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
-    emit.mov(STACKMAP_PTR, &saved_stackmap())
-        .mov(RSP, RBP)
+    emit.mov(RSP, RBP)
         .pop(RBP);
 
     if want_ret {
@@ -577,6 +540,5 @@ const TMP: R64 = R10;
 // Callee saved regs.
 const ALLOC_PTR: R64 = R12;
 const UNIVERSE_PTR: R64 = R13;
-const STACKMAP_PTR: R64 = R14;
 
 const OPTIMIZE_IF_CMP: bool = true;

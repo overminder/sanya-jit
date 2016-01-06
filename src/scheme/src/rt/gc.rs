@@ -147,7 +147,8 @@ impl GcState {
     unsafe fn alloc_with_size<A: IsOop>(&mut self,
                                         info: &InfoTable<A>,
                                         alloc_size: usize,
-                                        handle_block: &HandleBlock) -> Handle<A> {
+                                        handle_block: &HandleBlock)
+                                        -> Handle<A> {
         if let Some(h) = self.try_alloc(info, alloc_size, handle_block) {
             h
         } else {
@@ -155,7 +156,9 @@ impl GcState {
             // Assumes no other root exists.
             self.finish_collection();
             if self.available_spaces() < alloc_size {
-                panic!("GcState: failed to alloc {} bytes for {:?}", alloc_size, info);
+                panic!("GcState: failed to alloc {} bytes for {:?}",
+                       alloc_size,
+                       info);
             } else {
                 self.try_alloc(info, alloc_size, handle_block).unwrap()
             }
@@ -172,7 +175,8 @@ impl GcState {
     pub unsafe fn alloc_array<A: IsOop>(&mut self,
                                         info: &InfoTable<A>,
                                         len: usize,
-                                        handle_block: &HandleBlock) -> Handle<A> {
+                                        handle_block: &HandleBlock)
+                                        -> Handle<A> {
         let alloc_size = info.sizeof_array_instance(len);
         self.alloc_with_size(info, alloc_size, handle_block)
     }

@@ -44,8 +44,12 @@ impl<A> Debug for InfoTable<A> {
 }
 
 impl<A> InfoTable<A> {
-    pub fn new(ptr_payloads: u16, word_payloads: u16, arity: u16,
-               kind: OopKind, name: &'static str) -> Self {
+    pub fn new(ptr_payloads: u16,
+               word_payloads: u16,
+               arity: u16,
+               kind: OopKind,
+               name: &'static str)
+               -> Self {
         InfoTable {
             ptr_payloads: ptr_payloads,
             word_payloads: word_payloads,
@@ -84,7 +88,11 @@ impl<A> InfoTable<A> {
     }
 }
 
-fn mk_infotable_for_data<A>(nptrs: u16, nwords: u16, name: &'static str, kind: OopKind) -> InfoTable<A> {
+fn mk_infotable_for_data<A>(nptrs: u16,
+                            nwords: u16,
+                            name: &'static str,
+                            kind: OopKind)
+                            -> InfoTable<A> {
     InfoTable {
         ptr_payloads: nptrs,
         word_payloads: nwords,

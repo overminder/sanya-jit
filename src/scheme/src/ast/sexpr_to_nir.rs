@@ -98,8 +98,7 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                                                    .collect();
                             let last = box compile_expr(es.last().unwrap(), frame, is_tail);
                             return NSeq(body, last);
-                        }
-                        else if tag == "and" {
+                        } else if tag == "and" {
                             assert!(es.len() == 3);
                             return NIf {
                                 cond: box compile_expr(&es[1], frame, false),

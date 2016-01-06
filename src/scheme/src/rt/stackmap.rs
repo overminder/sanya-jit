@@ -3,6 +3,24 @@ use super::oop::Oop;
 use std::mem::transmute;
 use std::collections::HashMap;
 
+/// Frame Layout:
+///
+/// Higher Addr
+/// ^
+/// | ix                         | value
+/// +----------------------------+------------
+/// | rbp + 8                    | ret addr
+/// | rbp                        | saved rbp
+/// | rbp - 8                    | saved StackMap.as_word
+/// | rbp - (8 + 8 * local_ix)   | local variable slots
+/// | rsp + N ~ rsp              | local tmps (might contain an alignment slot)
+///
+/// Stack Map:
+/// A stackmap contains all the local variables and tmps.
+/// rbp - stackmap.len() * 8 points to the saved stackmap.
+
+pub const EXTRA_CALLER_SAVED_FRAME_SLOTS: usize = 0;
+
 // Could also use contain-rs's bit-set crate, but this impl is sufficient now.
 fn bitset_get(bs: &[u8], ix: usize) -> bool {
     ((bs[ix >> 3] >> (ix & 0x7)) & 1) == 1
@@ -28,6 +46,7 @@ pub struct StackMap {
 }
 
 // Maps the rip offsets for return addresses to stackmaps.
+#[derive(Debug)]
 pub struct StackMapTable {
     start: Option<usize>,
     offsets: HashMap<usize, StackMap>,
@@ -37,7 +56,7 @@ impl StackMapTable {
     pub fn new() -> Self {
         StackMapTable {
             start: None,
-            offsets: HashMap::new(),
+            offsets: [].iter().cloned().collect(),
         }
     }
 
@@ -160,10 +179,8 @@ impl Frame {
             assert_eq!(prev_rbp, until_rbp);
             None
         } else {
-            let next_stackmap = StackMap::reify_word(read_word(self.rbp, -8));
-            let map2 = smt.get(prev_rip).unwrap();
-            assert_eq!(*map2, next_stackmap);
-            Some(Frame::new(prev_rbp, prev_rip, next_stackmap))
+            let next_stackmap = smt.get(prev_rip).unwrap();
+            Some(Frame::new(prev_rbp, prev_rip, *next_stackmap))
         }
     }
 
@@ -182,9 +199,10 @@ pub struct FrameIterator<'a> {
 }
 
 impl<'a> FrameIterator<'a> {
-    pub fn new(rbp: usize, rip: usize, smt: &'a StackMapTable, stackmap: StackMap, until_rbp: usize) -> Self {
+    pub fn new(rbp: usize, rip: usize, smt: &'a StackMapTable, until_rbp: usize) -> Self {
+        let stackmap = smt.get(rip).unwrap();
         FrameIterator {
-            frame: Some(Frame::new(rbp, rip, stackmap)),
+            frame: Some(Frame::new(rbp, rip, *stackmap)),
             until_rbp: until_rbp,
             smt: smt,
         }
@@ -216,7 +234,7 @@ impl<'a> Iterator for FrameOopSlotIterator<'a> {
         loop {
             if let Some((ix, is_gcptr)) = self.inner.next() {
                 if is_gcptr {
-                    let slot = self.frame.rbp - (2 + ix) * 8;
+                    let slot = self.frame.rbp - (1 + ix + EXTRA_CALLER_SAVED_FRAME_SLOTS) * 8;
                     unsafe {
                         return Some(transmute(slot));
                     }

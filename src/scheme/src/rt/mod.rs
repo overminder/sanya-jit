@@ -7,21 +7,17 @@ pub mod stackmap;
 
 use self::oop::*;
 use self::gc::GcState;
-use self::stackmap::{FrameIterator, StackMap, StackMapTable};
+use self::stackmap::{FrameIterator, StackMapTable};
 
 // XXX: Use offsetof after https://github.com/rust-lang/rfcs/issues/1144 is implemented.
-pub const OFFSET_OF_UNIVERSE_STACKMAP_PTR: i32 = 0 * 8;
-pub const OFFSET_OF_UNIVERSE_SAVED_RBP: i32 = 1 * 8;
-pub const OFFSET_OF_UNIVERSE_BASE_RBP: i32 = 2 * 8;
-pub const OFFSET_OF_UNIVERSE_SAVED_RIP: i32 = 3 * 8;
-pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 4 * 8;
-pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 5 * 8;
+pub const OFFSET_OF_UNIVERSE_SAVED_RBP: i32 = 0 * 8;
+pub const OFFSET_OF_UNIVERSE_BASE_RBP: i32 = 1 * 8;
+pub const OFFSET_OF_UNIVERSE_SAVED_RIP: i32 = 2 * 8;
+pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 3 * 8;
+pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 4 * 8;
 
 #[repr(C)]
 pub struct Universe {
-    // The caller's stackmap, used for traversing the stack.
-    stackmap: StackMap,
-
     // The caller's rbp, used for traversing the stack.
     saved_rbp: usize,
 
@@ -37,7 +33,6 @@ pub struct Universe {
     // ^ The above fields should be changed with caution. Namely,
     // the field offsets (UNIVERSE_OFFSET_OF_*) need to be recalculated
     // after each change.
-
     pub smt: Option<StackMapTable>,
 
     handle_block: Box<HandleBlock>,
@@ -52,7 +47,6 @@ pub struct Universe {
 impl Universe {
     pub fn new(heap_size: usize) -> Self {
         Universe {
-            stackmap: StackMap::new(),
             saved_rbp: 0,
             base_rbp: 0,
             saved_rip: 0,
@@ -71,7 +65,6 @@ impl Universe {
         FrameIterator::new(self.saved_rbp,
                            self.saved_rip,
                            smt.as_ref().unwrap(),
-                           self.stackmap,
                            self.base_rbp)
     }
 
