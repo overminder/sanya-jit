@@ -33,6 +33,8 @@ pub struct InfoTable<A> {
     arity: u16,
     kind: OopKind,
     name: *const u8,
+    constant_offsets: *const Vec<usize>,
+    padding: [u8; 8],
     entry: [u8; 0],
     phantom_data: PhantomData<A>,
 }
@@ -56,6 +58,8 @@ impl<A> InfoTable<A> {
             arity: arity,
             kind: kind,
             name: name.as_ptr(),
+            constant_offsets: ptr::null(),
+            padding: [0; 8],
             entry: [],
             phantom_data: PhantomData,
         }
@@ -73,6 +77,15 @@ impl<A> InfoTable<A> {
 
     pub fn is_array(&self) -> bool {
         self.kind == OopKind::OopArray
+    }
+
+    pub unsafe fn constant_offsets(&self) -> Option<&[usize]> {
+        if self.constant_offsets.is_null() {
+            None
+        } else {
+            assert!(self.kind == OopKind::Callable);
+            Some(&*self.constant_offsets)
+        }
     }
 
     pub fn name(&self) -> &'static str {
@@ -93,15 +106,7 @@ fn mk_infotable_for_data<A>(nptrs: u16,
                             name: &'static str,
                             kind: OopKind)
                             -> InfoTable<A> {
-    InfoTable {
-        ptr_payloads: nptrs,
-        word_payloads: nwords,
-        arity: 0,
-        kind: kind,
-        name: name.as_ptr(),
-        phantom_data: PhantomData,
-        entry: [],
-    }
+    InfoTable::new(nptrs, nwords, 0, kind, name)
 }
 
 pub fn infotable_for_pair() -> InfoTable<Pair> {

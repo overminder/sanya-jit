@@ -1,6 +1,7 @@
 /// Naive semi-space copying GC.
 
 use super::oop::*;
+use super::stackmap::FrameIterator;
 
 use std::ptr;
 use std::mem::{swap, transmute};
@@ -93,6 +94,15 @@ impl GcState {
         // And mutate the location.
         *oop = copied_to.as_oop();
 
+        // Scavenge constants in the code.
+        if let Some(offsets) = copied_to.info().constant_offsets() {
+            let entry_word = *copied_to.entry_word();
+            for offset in offsets {
+                self.scavenge(transmute(entry_word + offset));
+            }
+        }
+
+        // Scavenge the interior pointers.
         if copied_to.info().is_array() {
             for ptr in copied_to.oop_cast::<OopArray>().content() {
                 self.scavenge(ptr);
@@ -144,41 +154,55 @@ impl GcState {
         }
     }
 
+    pub fn full_gc(&mut self,
+                   alloc_size: usize,
+                   handle_block: &HandleBlock,
+                   native_frames: Option<&FrameIterator>) {
+        self.prepare_collection(handle_block);
+        if let Some(native_frames) = native_frames {
+            for frame in native_frames {
+                for oop_slot in frame.iter_oop() {
+                    self.scavenge(oop_slot);
+                }
+            }
+        }
+        // Assumes no other root exists.
+        self.finish_collection();
+        if self.available_spaces() < alloc_size {
+            panic!("GcState: failed to alloc {} bytes.", alloc_size);
+        }
+    }
+
     unsafe fn alloc_with_size<A: IsOop>(&mut self,
                                         info: &InfoTable<A>,
                                         alloc_size: usize,
-                                        handle_block: &HandleBlock)
+                                        handle_block: &HandleBlock,
+                                        native_frames: Option<&FrameIterator>)
                                         -> Handle<A> {
         if let Some(h) = self.try_alloc(info, alloc_size, handle_block) {
             h
         } else {
-            self.prepare_collection(handle_block);
-            // Assumes no other root exists.
-            self.finish_collection();
-            if self.available_spaces() < alloc_size {
-                panic!("GcState: failed to alloc {} bytes for {:?}",
-                       alloc_size,
-                       info);
-            } else {
-                self.try_alloc(info, alloc_size, handle_block).unwrap()
-            }
+            self.full_gc();
+            self.try_alloc(info, alloc_size, handle_block).unwrap()
         }
     }
 
     pub unsafe fn alloc<A: IsOop>(&mut self,
                                   info: &InfoTable<A>,
-                                  handle_block: &HandleBlock)
+                                  handle_block: &HandleBlock,
+                                  native_frames: Option<&FrameIterator>)
                                   -> Handle<A> {
-        self.alloc_with_size(info, info.sizeof_instance(), handle_block)
+        self.alloc_with_size(info, info.sizeof_instance(), handle_block, native_frames)
     }
 
     pub unsafe fn alloc_array<A: IsOop>(&mut self,
                                         info: &InfoTable<A>,
                                         len: usize,
-                                        handle_block: &HandleBlock)
+                                        handle_block: &HandleBlock,
+                                        native_frames: Option<&FrameIterator>)
                                         -> Handle<A> {
         let alloc_size = info.sizeof_array_instance(len);
-        self.alloc_with_size(info, alloc_size, handle_block)
+        self.alloc_with_size(info, alloc_size, handle_block, native_frames)
     }
 
     pub fn available_spaces(&self) -> usize {

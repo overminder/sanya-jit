@@ -253,6 +253,9 @@ impl<'a> NodeCompiler<'a> {
                     .mov(TMP, i as i64)
                     .mov(&(RAX + 8), TMP);
             }
+            &mut NMkOopArray(ref len, ref fill) => {
+                panic!("XXX: MkOopArray");
+            }
             &mut NCall { ref mut func, ref mut args, is_tail } => {
                 let mut precall_map = stackmap;
                 for arg in args.iter_mut().rev() {
@@ -277,9 +280,9 @@ impl<'a> NodeCompiler<'a> {
                 let mut label_false = Label::new();
                 let mut label_done = Label::new();
 
-                let special_case = if let &mut NPrimFF(PrimOpFF::Lt, ref mut lhs, ref mut rhs) =
+                let special_case = if let &mut NPrimFF(op, ref mut lhs, ref mut rhs) =
                                           cond.as_mut() {
-                    if OPTIMIZE_IF_CMP {
+                    if op_is_cond(op) && OPTIMIZE_IF_CMP {
                         let mut map0 = stackmap;
                         try!(self.compile(rhs, map0));
                         self.push_oop(RAX, &mut map0);
@@ -289,7 +292,7 @@ impl<'a> NodeCompiler<'a> {
                             .pop(TMP)
                             .mov(TMP, &(TMP + 8))
                             .cmp(RAX, TMP)
-                            .jge(&mut label_false);
+                            .jcc(op_to_cond(op), &mut label_false);
 
                         true
                     } else {
@@ -335,7 +338,7 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(n, stackmap));
                 self.emit.mov(&frame_slot(ix), RAX);
             }
-            &mut NPrimFF(ref op, ref mut n1, ref mut n2) => {
+            &mut NPrimFF(op, ref mut n1, ref mut n2) => {
                 let mut map0 = stackmap;
                 try!(self.compile(n2, map0));
                 self.push_oop(RAX, &mut map0);
@@ -348,7 +351,7 @@ impl<'a> NodeCompiler<'a> {
                 map0.pop();
 
                 // Save the unboxed result to %rax
-                match *op {
+                match op {
                     PrimOpFF::Add => {
                         self.emit
                             .add(RAX, &(TMP + 8));
@@ -357,12 +360,12 @@ impl<'a> NodeCompiler<'a> {
                         self.emit
                             .sub(RAX, &(TMP + 8));
                     }
-                    PrimOpFF::Lt => {
+                    PrimOpFF::Lt | PrimOpFF::Eq => {
                         self.emit
                             .cmp(RAX, &(TMP + 8))
                             .mov(TMP, 1)
                             .mov(RAX, 0)
-                            .cmovl(RAX, TMP);
+                            .cmovcc(op_to_cond(op), RAX, TMP);
                     }
 
                 }
@@ -449,7 +452,24 @@ impl<'a> NodeCompiler<'a> {
     }
 }
 
-// Misc
+// Instruction selection misc.
+
+fn op_is_cond(op: PrimOpFF) -> bool {
+    match op {
+        PrimOpFF::Lt | PrimOpFF::Eq => true,
+        _ => false,
+    }
+}
+
+fn op_to_cond(op: PrimOpFF) -> Cond {
+    match op {
+        PrimOpFF::Lt => Cond::L,
+        PrimOpFF::Eq => Cond::E,
+        _ => panic!("Not a conditional op: {:?}", op),
+    }
+}
+
+// Layout misc.
 
 fn universe_alloc_ptr() -> Addr {
     Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_PTR)

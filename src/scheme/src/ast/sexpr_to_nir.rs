@@ -58,6 +58,22 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                     let ix = frame.find_or_create_slot(name);
                     NWriteLocal(ix, box compile_expr(form, frame, is_tail))
                 }
+                [Sym(ref tag), ref arr, ref ix] if tag == "nth#" => {
+                    NReadOopArray(box compile_expr(arr, frame, false),
+                                  box compile_expr(ix, frame, false))
+                }
+                [Sym(ref tag), ref arr, ref ix, ref val] if tag == "set-nth!#" => {
+                    NWriteOopArray(box compile_expr(arr, frame, false),
+                                   box compile_expr(ix, frame, false),
+                                   box compile_expr(val, frame, false))
+                }
+                [Sym(ref tag), ref arr] if tag == "len#" => {
+                    NReadOopArrayLength(box compile_expr(arr, frame, false))
+                }
+                [Sym(ref tag), ref len, ref fill] if tag == "mk-arr#" => {
+                    NMkOopArray(box compile_expr(len, frame, false),
+                                box compile_expr(fill, frame, false))
+                }
                 [Sym(ref tag), ref e1] if tag == "display#" => {
                     NPrimO(PrimOpO::Display, box compile_expr(e1, frame, false))
                 }

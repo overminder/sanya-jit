@@ -83,6 +83,7 @@ pub enum RawNode {
     // Allocations.
     NMkFixnum(isize),
     NMkPair(Node, Node),
+    NMkOopArray(Node /* length */, Node /* fill */),
 
     // Control flows.
     NCall {
@@ -100,24 +101,30 @@ pub enum RawNode {
     // Storage manipulations.
     NReadArgument(usize),
     NReadGlobal(String),
+    // NReadClosure(usize),
     NReadLocal(usize),
     NWriteLocal(usize, Node),
+
+    NReadOopArray(Node, Node),
+    NWriteOopArray(Node, Node, Node),
+    NReadOopArrayLength(Node),
 
     // PrimOps.
     NPrimFF(PrimOpFF, Node, Node), // Fixnum binary ops.
     NPrimO(PrimOpO, Node), // Oop binary ops.
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum PrimOpO {
     Display,
     PanicInlineSym,
     Fixnump,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum PrimOpFF {
     Add,
+    Eq,
     Lt,
     Sub,
 }
@@ -148,10 +155,26 @@ impl RawNode {
         match direction {
             Forward => {
                 match self {
-                    &mut NMkPair(ref mut n1, ref mut n2) => {
+                    &mut NWriteLocal(_, ref mut n) |
+                    &mut NReadOopArrayLength(ref mut n) |
+                    &mut NPrimO(_, ref mut n) => {
+                        try!(n.traverse(t));
+                    }
+
+                    &mut NMkPair(ref mut n1, ref mut n2) |
+                    &mut NMkOopArray(ref mut n1, ref mut n2) |
+                    &mut NReadOopArray(ref mut n1, ref mut n2) |
+                    &mut NPrimFF(_, ref mut n1, ref mut n2) => {
                         try!(n1.traverse(t));
                         try!(n2.traverse(t));
                     }
+
+                    &mut NWriteOopArray(ref mut n1, ref mut n2, ref mut n3) => {
+                        try!(n1.traverse(t));
+                        try!(n2.traverse(t));
+                        try!(n3.traverse(t));
+                    }
+
                     &mut NCall { ref mut func, ref mut args, .. } => {
                         try!(func.traverse(t));
                         for arg in args {
@@ -169,12 +192,6 @@ impl RawNode {
                         }
                         try!(n.traverse(t));
                     }
-                    &mut NWriteLocal(_, ref mut n) => try!(n.traverse(t)),
-                    &mut NPrimFF(_, ref mut n1, ref mut n2) => {
-                        try!(n1.traverse(t));
-                        try!(n2.traverse(t));
-                    }
-                    &mut NPrimO(_, ref mut n) => try!(n.traverse(t)),
                     _ => {}
                 }
             }

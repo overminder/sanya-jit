@@ -110,18 +110,7 @@ impl Universe {
 
     pub fn full_gc(&mut self, alloc_size: usize) -> usize {
         unsafe {
-            self.gc.prepare_collection(&mut self.handle_block);
-            for frame in self.iter_frame(&self.smt) {
-                for oop_slot in frame.iter_oop() {
-                    self.gc.scavenge(oop_slot);
-                }
-            }
-            self.gc.finish_collection();
-            if self.gc.available_spaces() < alloc_size {
-                panic!("GcState: failed to alloc {} bytes from compiled code.",
-                       alloc_size);
-            }
-
+            self.gc.full_gc(alloc_size, &self.handle_block, self.iter_frame(&self.smt));
             self.gc.unsafe_alloc(alloc_size)
         }
     }
