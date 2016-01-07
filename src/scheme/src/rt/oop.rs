@@ -137,10 +137,6 @@ impl Closure {
         *self.entry_word() == info.entry_word()
     }
 
-    pub unsafe fn from_raw<'a>(oop: Oop) -> &'a mut Self {
-        &mut *transmute::<Oop, *mut Self>(oop)
-    }
-
     pub unsafe fn info(&self) -> &InfoTable<Self> {
         InfoTable::<Self>::from_entry(*self.entry_word())
     }
@@ -223,6 +219,10 @@ pub trait IsOop : Sized {
 
     unsafe fn oop_cast<A: IsOop>(&self) -> &A {
         transmute(self)
+    }
+
+    unsafe fn from_raw<'a>(oop: Oop) -> &'a mut Self {
+        &mut *transmute::<Oop, *mut Self>(oop)
     }
 }
 

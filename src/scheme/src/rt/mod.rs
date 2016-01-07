@@ -9,6 +9,8 @@ use self::oop::*;
 use self::gc::GcState;
 use self::stackmap::{FrameIterator, StackMapTable};
 
+use std::mem::transmute;
+
 // XXX: Use offsetof after https://github.com/rust-lang/rfcs/issues/1144 is implemented.
 pub const OFFSET_OF_UNIVERSE_SAVED_RBP: i32 = 0 * 8;
 pub const OFFSET_OF_UNIVERSE_BASE_RBP: i32 = 1 * 8;
@@ -61,28 +63,39 @@ impl Universe {
         }
     }
 
-    pub fn iter_frame<'a, 'b>(&'b self, smt: &'a Option<StackMapTable>) -> FrameIterator<'a> {
-        FrameIterator::new(self.saved_rbp,
-                           self.saved_rip,
-                           smt.as_ref().unwrap(),
-                           self.base_rbp)
+    pub fn iter_frame<'a, 'b>(&'b self,
+                              smt: &'a Option<StackMapTable>)
+                              -> Option<FrameIterator<'a>> {
+        if self.saved_rbp == 0 {
+            None
+        } else {
+            Some(FrameIterator::new(self.saved_rbp,
+                                    self.saved_rip,
+                                    smt.as_ref().unwrap(),
+                                    self.base_rbp))
+        }
     }
 
     pub fn as_ptr(&self) -> *const Self {
         self as *const _
     }
 
-    pub fn oop_is_pair(&self, oop: &Closure) -> bool {
-        unsafe { oop.info_is(&self.pair_info) }
+    pub fn oop_is_pair(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info_is(&self.pair_info) }
     }
 
-    pub fn oop_is_fixnum(&self, oop: &Closure) -> bool {
-        unsafe { oop.info_is(&self.fixnum_info) }
+    pub fn oop_is_fixnum(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info_is(&self.fixnum_info) }
+    }
+
+    pub fn oop_is_ooparray(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info_is(&self.ooparray_info) }
     }
 
     pub fn new_pair(&mut self, car: Oop, cdr: Oop) -> Handle<Pair> {
         unsafe {
-            let mut res = self.gc.alloc(&self.pair_info, &self.handle_block);
+            let native_frames = self.iter_frame(&self.smt);
+            let mut res = self.gc.alloc(&self.pair_info, &self.handle_block, native_frames);
             res.car = car;
             res.cdr = cdr;
             res
@@ -91,26 +104,36 @@ impl Universe {
 
     pub fn new_fixnum(&mut self, value: isize) -> Handle<Fixnum> {
         unsafe {
-            let mut res = self.gc.alloc(&self.fixnum_info, &self.handle_block);
+            let native_frames = self.iter_frame(&self.smt);
+            let mut res = self.gc.alloc(&self.fixnum_info, &self.handle_block, native_frames);
             res.value = value;
             res
         }
     }
 
-    pub fn new_ooparray(&mut self, len: usize, fill: Oop) -> Handle<OopArray> {
+    pub fn new_ooparray(&mut self, len: usize, fill: Handle<Closure>) -> Handle<OopArray> {
         unsafe {
-            let mut res = self.gc.alloc_array(&self.ooparray_info, len, &self.handle_block);
+            let native_frames = self.iter_frame(&self.smt);
+            let mut res = self.gc.alloc_array(&self.ooparray_info,
+                                              len,
+                                              &self.handle_block,
+                                              native_frames);
             res.len = len;
             for ptr in res.content() {
-                *ptr = fill;
+                *ptr = fill.as_oop();
             }
             res
         }
     }
 
+    pub fn oop_handle<A: IsOop>(&mut self, oop: Oop) -> Handle<A> {
+        unsafe { self.handle_block.new_handle(transmute(oop)) }
+    }
+
     pub fn full_gc(&mut self, alloc_size: usize) -> usize {
         unsafe {
-            self.gc.full_gc(alloc_size, &self.handle_block, self.iter_frame(&self.smt));
+            let native_frames = self.iter_frame(&self.smt);
+            self.gc.full_gc(alloc_size, &self.handle_block, native_frames);
             self.gc.unsafe_alloc(alloc_size)
         }
     }

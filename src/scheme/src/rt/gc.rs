@@ -154,10 +154,10 @@ impl GcState {
         }
     }
 
-    pub fn full_gc(&mut self,
-                   alloc_size: usize,
-                   handle_block: &HandleBlock,
-                   native_frames: Option<&FrameIterator>) {
+    pub unsafe fn full_gc(&mut self,
+                          alloc_size: usize,
+                          handle_block: &HandleBlock,
+                          native_frames: Option<FrameIterator>) {
         self.prepare_collection(handle_block);
         if let Some(native_frames) = native_frames {
             for frame in native_frames {
@@ -177,12 +177,12 @@ impl GcState {
                                         info: &InfoTable<A>,
                                         alloc_size: usize,
                                         handle_block: &HandleBlock,
-                                        native_frames: Option<&FrameIterator>)
+                                        native_frames: Option<FrameIterator>)
                                         -> Handle<A> {
         if let Some(h) = self.try_alloc(info, alloc_size, handle_block) {
             h
         } else {
-            self.full_gc();
+            self.full_gc(alloc_size, handle_block, native_frames);
             self.try_alloc(info, alloc_size, handle_block).unwrap()
         }
     }
@@ -190,7 +190,7 @@ impl GcState {
     pub unsafe fn alloc<A: IsOop>(&mut self,
                                   info: &InfoTable<A>,
                                   handle_block: &HandleBlock,
-                                  native_frames: Option<&FrameIterator>)
+                                  native_frames: Option<FrameIterator>)
                                   -> Handle<A> {
         self.alloc_with_size(info, info.sizeof_instance(), handle_block, native_frames)
     }
@@ -199,7 +199,7 @@ impl GcState {
                                         info: &InfoTable<A>,
                                         len: usize,
                                         handle_block: &HandleBlock,
-                                        native_frames: Option<&FrameIterator>)
+                                        native_frames: Option<FrameIterator>)
                                         -> Handle<A> {
         let alloc_size = info.sizeof_array_instance(len);
         self.alloc_with_size(info, alloc_size, handle_block, native_frames)

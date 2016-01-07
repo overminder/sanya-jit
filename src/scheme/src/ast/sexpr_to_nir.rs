@@ -23,8 +23,8 @@ pub fn compile_scdefn(e: &SExpr) -> ScDefn {
                                                                  form[1].is_list() => {
                     let mut frame = FrameDescr::new();
                     let args = unwrap_sym_list(&form[1]).unwrap();
-                    let read_arg_nodes: NodeList = (0..)
-                                                       .zip(args.iter())
+                    let read_arg_nodes: NodeList = args.iter()
+                                                       .enumerate()
                                                        .map(|(nth_arg, name)| {
                                                            let local_ix =
                                                                frame.find_or_create_slot(name);

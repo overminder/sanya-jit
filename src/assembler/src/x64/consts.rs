@@ -51,3 +51,19 @@ pub enum Cond {
     LE = 14,
     G = 15,
 }
+
+impl Cond {
+    pub fn inverse(self) -> Self {
+        use self::Cond::*;
+
+        match self {
+            E => NE,
+            NE => E,
+            L => GE,
+            LE => G,
+            G => LE,
+            GE => L,
+        }
+    }
+}
+

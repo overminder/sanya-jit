@@ -3,7 +3,7 @@
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
-use rt::oop::{Closure, Fixnum, IsOop, InfoTable};
+use rt::oop::{Closure, Fixnum, OopArray, IsOop, Oop, Handle};
 use rt::stackmap::{StackMap, StackMapTable, EXTRA_CALLER_SAVED_FRAME_SLOTS};
 use rt::inlinesym::InlineSym;
 
@@ -108,7 +108,9 @@ impl ModuleCompiler {
 
         // Sync back the regs to the runtime state.
         self.emit
-            .mov(&universe_alloc_ptr(), ALLOC_PTR);
+            .mov(&universe_alloc_ptr(), ALLOC_PTR)
+            .mov(TMP, 0)
+            .mov(&universe_saved_rbp(), TMP);
 
         // Restore the saved regs.
         self.emit
@@ -253,8 +255,19 @@ impl<'a> NodeCompiler<'a> {
                     .mov(TMP, i as i64)
                     .mov(&(RAX + 8), TMP);
             }
-            &mut NMkOopArray(ref len, ref fill) => {
-                panic!("XXX: MkOopArray");
+            &mut NMkOopArray(ref mut len, ref mut fill) => {
+                let mut precall_map = stackmap;
+                try!(self.compile(fill, precall_map));
+                self.push_oop(RAX, &mut precall_map);
+                try!(self.compile(len, precall_map));
+                self.emit
+                    .mov(RDI, UNIVERSE_PTR)
+                    .mov(RSI, RAX)
+                    .pop(RDX);
+                self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+                    emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_ooparray) })
+                        .call(RAX);
+                });
             }
             &mut NCall { ref mut func, ref mut args, is_tail } => {
                 let mut precall_map = stackmap;
@@ -292,7 +305,7 @@ impl<'a> NodeCompiler<'a> {
                             .pop(TMP)
                             .mov(TMP, &(TMP + 8))
                             .cmp(RAX, TMP)
-                            .jcc(op_to_cond(op), &mut label_false);
+                            .jcc(op_to_cond(op).inverse(), &mut label_false);
 
                         true
                     } else {
@@ -337,6 +350,30 @@ impl<'a> NodeCompiler<'a> {
             &mut NWriteLocal(ix, ref mut n) => {
                 try!(self.compile(n, stackmap));
                 self.emit.mov(&frame_slot(ix), RAX);
+            }
+            &mut NReadOopArray(ref mut arr, ref mut ix) => {
+                let mut map0 = stackmap;
+                try!(self.compile(ix, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(arr, map0));
+                self.emit
+                    .pop(TMP)
+                    .mov(TMP, &(TMP + 8))
+                    .mov(RAX, &(RAX + TMP * 8 + 16));  // array indexing
+            }
+            &mut NWriteOopArray(ref mut arr, ref mut ix, ref mut val) => {
+                let mut map0 = stackmap;
+                try!(self.compile(val, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(ix, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(arr, map0));
+                self.emit
+                    .pop(TMP)
+                    .mov(TMP, &(TMP + 8))
+                    .lea(TMP, &(RAX + TMP * 8 + 16))
+                    .pop(RAX)
+                    .mov(&Addr::B(TMP), RAX);
             }
             &mut NPrimFF(op, ref mut n1, ref mut n2) => {
                 let mut map0 = stackmap;
@@ -524,11 +561,18 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     m
 }
 
-unsafe extern "C" fn display_oop(oop: &Closure, universe: &Universe) {
+unsafe extern "C" fn display_oop(oop: Oop, universe: &Universe) {
     if universe.oop_is_fixnum(oop) {
-        println!("display_oop: Fixnum {}", oop.oop_cast::<Fixnum>().value);
+        let i = Fixnum::from_raw(oop);
+        println!("display_oop: Fixnum {}", i.value);
+    } else if universe.oop_is_ooparray(oop) {
+        let arr = OopArray::from_raw(oop);
+        println!("display_oop: OopArray {}", arr.len());
+        for oop in arr.content() {
+            display_oop(*oop, universe);
+        }
     } else {
-        panic!("Doesn't know how to display oop: {:#x}", oop.as_word());
+        panic!("Doesn't know how to display oop: {:#x}", oop);
     }
 }
 
@@ -536,9 +580,9 @@ unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {
     // Unwind the stack.
     let reason = InlineSym::from_word(f.value as usize);
     println!("Panic (cause = {}), Unwinding the stack.", reason.as_str());
-    for (frame_no, frame) in (0..).zip(universe.iter_frame(&universe.smt)) {
+    for (frame_no, frame) in universe.iter_frame(&universe.smt).unwrap().enumerate() {
         println!("Frame {}: {:?}", frame_no, frame);
-        for (slot_no, oop_slot) in (0..).zip(frame.iter_oop()) {
+        for (slot_no, oop_slot) in frame.iter_oop().enumerate() {
             let oop = *oop_slot;
             println!("  Slot {}: *{:#x} = {}",
                      slot_no,
@@ -552,6 +596,13 @@ unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {
 
 unsafe extern "C" fn full_gc(universe: &mut Universe, alloc_size: usize) -> usize {
     universe.full_gc(alloc_size)
+}
+
+unsafe extern "C" fn alloc_ooparray(universe: &mut Universe, len: Oop, fill: Oop) -> Oop {
+    assert!(universe.oop_is_fixnum(len));
+    let len: Handle<Fixnum> = universe.oop_handle(len);
+    let fill: Handle<Closure> = universe.oop_handle(fill);
+    universe.new_ooparray(len.value as usize, fill).as_oop()
 }
 
 // Caller saved regs.
