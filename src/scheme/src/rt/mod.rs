@@ -43,6 +43,7 @@ pub struct Universe {
     pub pair_info: InfoTable<Pair>,
     pub fixnum_info: InfoTable<Fixnum>,
     pub ooparray_info: InfoTable<OopArray>,
+    pub i64array_info: InfoTable<I64Array>,
 }
 
 // XXX: Those should be unsafe.
@@ -60,6 +61,7 @@ impl Universe {
             pair_info: infotable_for_pair(),
             fixnum_info: infotable_for_fixnum(),
             ooparray_info: infotable_for_ooparray(),
+            i64array_info: infotable_for_i64array(),
         }
     }
 
@@ -121,6 +123,21 @@ impl Universe {
             res.len = len;
             for ptr in res.content() {
                 *ptr = fill.as_oop();
+            }
+            res
+        }
+    }
+
+    pub fn new_i64array(&mut self, len: usize, fill: i64) -> Handle<I64Array> {
+        unsafe {
+            let native_frames = self.iter_frame(&self.smt);
+            let mut res = self.gc.alloc_array(&self.i64array_info,
+                                              len,
+                                              &self.handle_block,
+                                              native_frames);
+            res.len = len;
+            for ptr in res.content() {
+                *ptr = fill;
             }
             res
         }

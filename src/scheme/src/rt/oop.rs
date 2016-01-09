@@ -19,11 +19,18 @@ pub fn sizeof_ptrs(nptrs: usize) -> usize {
 }
 
 #[repr(u16)]
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub enum OopKind {
     Plain,
     Callable,
     OopArray,
+    I64Array,
+}
+
+impl OopKind {
+    pub fn is_array(self) -> bool {
+        self == OopKind::OopArray || self == OopKind::I64Array
+    }
 }
 
 #[repr(C)]
@@ -76,6 +83,10 @@ impl<A> InfoTable<A> {
     }
 
     pub fn is_array(&self) -> bool {
+        self.kind.is_array()
+    }
+
+    pub fn is_ooparray(&self) -> bool {
         self.kind == OopKind::OopArray
     }
 
@@ -119,6 +130,10 @@ pub fn infotable_for_fixnum() -> InfoTable<Fixnum> {
 
 pub fn infotable_for_ooparray() -> InfoTable<OopArray> {
     mk_infotable_for_data(0, 0, "<OopArray>", OopKind::OopArray)
+}
+
+pub fn infotable_for_i64array() -> InfoTable<I64Array> {
+    mk_infotable_for_data(0, 0, "<I64Array>", OopKind::I64Array)
 }
 
 /// A Closure is not exactly an ordinary callable object in the narrow sense -
@@ -179,6 +194,18 @@ pub struct Pair {
     pub cdr: Oop,
 }
 
+// Assumes arrays have the same layout: [info, len, content...]
+pub trait IsArray<A: Sized> : Sized {
+    unsafe fn len(&self) -> usize {
+        *transmute::<usize, *const usize>(self as *const _ as usize + 8)
+    }
+
+    unsafe fn content(&self) -> &mut [A] {
+        let content_ptr = self as *const _ as usize + 16;
+        slice::from_raw_parts_mut(content_ptr as *mut _, self.len())
+    }
+}
+
 #[repr(C)]
 pub struct OopArray {
     info: *const (),
@@ -186,15 +213,16 @@ pub struct OopArray {
     pub content: [Oop; 0],
 }
 
-impl OopArray {
-    pub fn len(&self) -> usize {
-        self.len
-    }
+impl IsArray<Oop> for OopArray {}
 
-    pub unsafe fn content(&self) -> &mut [Oop] {
-        slice::from_raw_parts_mut(self.content.as_ptr() as *mut _, self.len)
-    }
+#[repr(C)]
+pub struct I64Array {
+    info: *const (),
+    pub len: usize,
+    pub content: [i64; 0],
 }
+
+impl IsArray<i64> for I64Array {}
 
 // Doubly-linked list of oops. Used to manage root of stacks.
 
@@ -230,6 +258,7 @@ impl IsOop for Closure {}
 impl IsOop for Fixnum {}
 impl IsOop for Pair {}
 impl IsOop for OopArray {}
+impl IsOop for I64Array {}
 
 impl HandleBlock {
     pub fn new() -> Box<HandleBlock> {

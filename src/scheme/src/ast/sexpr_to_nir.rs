@@ -62,16 +62,30 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                     NReadOopArray(box compile_expr(arr, frame, false),
                                   box compile_expr(ix, frame, false))
                 }
+                [Sym(ref tag), ref arr, ref ix] if tag == "nth-i64#" => {
+                    NReadI64Array(box compile_expr(arr, frame, false),
+                                  box compile_expr(ix, frame, false))
+                }
                 [Sym(ref tag), ref arr, ref ix, ref val] if tag == "set-nth!#" => {
                     NWriteOopArray(box compile_expr(arr, frame, false),
                                    box compile_expr(ix, frame, false),
                                    box compile_expr(val, frame, false))
                 }
+                [Sym(ref tag), ref arr, ref ix, ref val] if tag == "set-nth-i64!#" => {
+                    NWriteI64Array(box compile_expr(arr, frame, false),
+                                   box compile_expr(ix, frame, false),
+                                   box compile_expr(val, frame, false))
+                }
                 [Sym(ref tag), ref arr] if tag == "len#" => {
+                    // Generic array length.
                     NReadOopArrayLength(box compile_expr(arr, frame, false))
                 }
                 [Sym(ref tag), ref len, ref fill] if tag == "mk-arr#" => {
                     NMkOopArray(box compile_expr(len, frame, false),
+                                box compile_expr(fill, frame, false))
+                }
+                [Sym(ref tag), ref len, ref fill] if tag == "mk-arr-i64#" => {
+                    NMkI64Array(box compile_expr(len, frame, false),
                                 box compile_expr(fill, frame, false))
                 }
                 [Sym(ref tag), ref e1] if tag == "display#" => {

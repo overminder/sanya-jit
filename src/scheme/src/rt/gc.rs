@@ -62,6 +62,7 @@ impl GcState {
     unsafe fn copy<'a>(&mut self, oop: &Closure) -> &'a Closure {
         let info = oop.info();
         let count = if info.is_array() {
+            // Assumes all array have the same layout.
             info.sizeof_array_instance(oop.oop_cast::<OopArray>().len())
         } else {
             info.sizeof_instance()
@@ -103,7 +104,7 @@ impl GcState {
         }
 
         // Scavenge the interior pointers.
-        if copied_to.info().is_array() {
+        if copied_to.info().is_ooparray() {
             for ptr in copied_to.oop_cast::<OopArray>().content() {
                 self.scavenge(ptr);
             }

@@ -84,6 +84,7 @@ pub enum RawNode {
     NMkFixnum(isize),
     NMkPair(Node, Node),
     NMkOopArray(Node /* length */, Node /* fill */),
+    NMkI64Array(Node /* length */, Node /* fill */),
 
     // Control flows.
     NCall {
@@ -108,6 +109,10 @@ pub enum RawNode {
     NReadOopArray(Node, Node),
     NWriteOopArray(Node, Node, Node),
     NReadOopArrayLength(Node),
+
+    NReadI64Array(Node, Node),
+    NWriteI64Array(Node, Node, Node),
+    NReadI64ArrayLength(Node),
 
     // PrimOps.
     NPrimFF(PrimOpFF, Node, Node), // Fixnum binary ops.
@@ -157,19 +162,23 @@ impl RawNode {
                 match self {
                     &mut NWriteLocal(_, ref mut n) |
                     &mut NReadOopArrayLength(ref mut n) |
+                    &mut NReadI64ArrayLength(ref mut n) |
                     &mut NPrimO(_, ref mut n) => {
                         try!(n.traverse(t));
                     }
 
                     &mut NMkPair(ref mut n1, ref mut n2) |
                     &mut NMkOopArray(ref mut n1, ref mut n2) |
+                    &mut NMkI64Array(ref mut n1, ref mut n2) |
                     &mut NReadOopArray(ref mut n1, ref mut n2) |
+                    &mut NReadI64Array(ref mut n1, ref mut n2) |
                     &mut NPrimFF(_, ref mut n1, ref mut n2) => {
                         try!(n1.traverse(t));
                         try!(n2.traverse(t));
                     }
 
-                    &mut NWriteOopArray(ref mut n1, ref mut n2, ref mut n3) => {
+                    &mut NWriteOopArray(ref mut n1, ref mut n2, ref mut n3) |
+                    &mut NWriteI64Array(ref mut n1, ref mut n2, ref mut n3) => {
                         try!(n1.traverse(t));
                         try!(n2.traverse(t));
                         try!(n3.traverse(t));

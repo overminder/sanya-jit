@@ -3,7 +3,7 @@
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
-use rt::oop::{Closure, Fixnum, OopArray, IsOop, Oop, Handle};
+use rt::oop::{Closure, Fixnum, OopArray, IsOop, IsArray, Oop, Handle};
 use rt::stackmap::{StackMap, StackMapTable, EXTRA_CALLER_SAVED_FRAME_SLOTS};
 use rt::inlinesym::InlineSym;
 
@@ -237,13 +237,17 @@ impl<'a> NodeCompiler<'a> {
         }
     }
 
-    fn push_oop(&mut self, r: R64, stackmap: &mut StackMap) {
-        self.emit.push(r);
+    fn push_oop<Op>(&mut self, src: Op, stackmap: &mut StackMap)
+        where Emit: EmitPush<Op>
+    {
+        self.emit.push(src);
         stackmap.push_gcptr();
     }
 
-    fn push_word(&mut self, r: R64, stackmap: &mut StackMap) {
-        self.emit.push(r);
+    fn push_word<Op>(&mut self, src: Op, stackmap: &mut StackMap)
+        where Emit: EmitPush<Op>
+    {
+        self.emit.push(src);
         stackmap.push_word();
     }
 
@@ -266,6 +270,23 @@ impl<'a> NodeCompiler<'a> {
                     .pop(RDX);
                 self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
                     emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_ooparray) })
+                        .call(RAX);
+                });
+            }
+            &mut NMkI64Array(ref mut len, ref mut fill) => {
+                let mut precall_map = stackmap;
+                try!(self.compile(fill, precall_map));
+                // unbox and push `fill`
+                self.push_word(&(RAX + 8), &mut precall_map);
+                try!(self.compile(len, precall_map));
+                // RSI: unboxed `len`
+                // RDX: `fill`
+                self.emit
+                    .mov(RDI, UNIVERSE_PTR)
+                    .mov(RSI, &(RAX + 8))
+                    .pop(RDX);
+                self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+                    emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_i64array) })
                         .call(RAX);
                 });
             }
@@ -352,6 +373,16 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(&frame_slot(ix), RAX);
             }
             &mut NReadOopArray(ref mut arr, ref mut ix) => {
+                let mut map0 = stackmap;
+                try!(self.compile(ix, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(arr, map0));
+                self.emit
+                    .pop(TMP)
+                    .mov(TMP, &(TMP + 8))
+                    .mov(RAX, &(RAX + TMP * 8 + 16));  // array indexing
+            }
+            &mut NReadI64Array(ref mut arr, ref mut ix) => {
                 let mut map0 = stackmap;
                 try!(self.compile(ix, map0));
                 self.push_oop(RAX, &mut map0);
@@ -603,6 +634,10 @@ unsafe extern "C" fn alloc_ooparray(universe: &mut Universe, len: Oop, fill: Oop
     let len: Handle<Fixnum> = universe.oop_handle(len);
     let fill: Handle<Closure> = universe.oop_handle(fill);
     universe.new_ooparray(len.value as usize, fill).as_oop()
+}
+
+unsafe extern "C" fn alloc_i64array(universe: &mut Universe, len: usize, fill: i64) -> Oop {
+    universe.new_i64array(len, fill).as_oop()
 }
 
 // Caller saved regs.
