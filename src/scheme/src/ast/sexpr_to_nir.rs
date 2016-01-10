@@ -78,7 +78,7 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                 }
                 [Sym(ref tag), ref arr] if tag == "len#" => {
                     // Generic array length.
-                    NReadOopArrayLength(box compile_expr(arr, frame, false))
+                    NReadArrayLength(box compile_expr(arr, frame, false))
                 }
                 [Sym(ref tag), ref len, ref fill] if tag == "mk-arr#" => {
                     NMkOopArray(box compile_expr(len, frame, false),
@@ -101,12 +101,13 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                 [Sym(ref tag), ref e1, ref e2] if is_prim_ff_op(tag) => {
                     let n1 = compile_expr(e1, frame, false);
                     let n2 = compile_expr(e2, frame, false);
-                    match tag.as_ref() {
-                        "+#" => NPrimFF(PrimOpFF::Add, box n1, box n2),
-                        "-#" => NPrimFF(PrimOpFF::Sub, box n1, box n2),
-                        "<#" => NPrimFF(PrimOpFF::Lt, box n1, box n2),
+                    let op = match tag.as_ref() {
+                        "+#" => PrimOpFF::Add,
+                        "-#" => PrimOpFF::Sub,
+                        "<#" => PrimOpFF::Lt,
                         _ => panic!("{}: Not a PrimOpFF", tag),
-                    }
+                    };
+                    NPrimFF(op, box n1, box n2)
                 }
                 [Sym(ref tag), ref e1, ref e2, ref e3] if tag == "if" => {
                     let n1 = compile_expr(e1, frame, false);

@@ -108,11 +108,12 @@ pub enum RawNode {
 
     NReadOopArray(Node, Node),
     NWriteOopArray(Node, Node, Node),
-    NReadOopArrayLength(Node),
 
     NReadI64Array(Node, Node),
     NWriteI64Array(Node, Node, Node),
-    NReadI64ArrayLength(Node),
+
+    // Generic
+    NReadArrayLength(Node),
 
     // PrimOps.
     NPrimFF(PrimOpFF, Node, Node), // Fixnum binary ops.
@@ -161,8 +162,7 @@ impl RawNode {
             Forward => {
                 match self {
                     &mut NWriteLocal(_, ref mut n) |
-                    &mut NReadOopArrayLength(ref mut n) |
-                    &mut NReadI64ArrayLength(ref mut n) |
+                    &mut NReadArrayLength(ref mut n) |
                     &mut NPrimO(_, ref mut n) => {
                         try!(n.traverse(t));
                     }

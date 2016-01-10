@@ -372,6 +372,16 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(n, stackmap));
                 self.emit.mov(&frame_slot(ix), RAX);
             }
+            &mut NReadArrayLength(ref mut arr) => {
+                let mut map0 = stackmap;
+                try!(self.compile(arr, map0));
+                self.emit.mov(RAX, &(RAX + 8));
+                self.push_word(RAX, &mut map0);
+                self.emit_fixnum_allocation(map0);
+                self.emit
+                    .pop(TMP)
+                    .mov(&(RAX + 8), TMP);
+            }
             &mut NReadOopArray(ref mut arr, ref mut ix) => {
                 let mut map0 = stackmap;
                 try!(self.compile(ix, map0));
