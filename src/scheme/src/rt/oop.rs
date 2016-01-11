@@ -7,7 +7,7 @@ use std::ptr;
 use std::ffi::CStr;
 use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
-use std::mem::{size_of, transmute};
+use std::mem::{size_of, transmute, replace};
 use std::fmt::{self, Formatter, Debug};
 
 pub type Oop = usize;
@@ -53,6 +53,14 @@ impl<A> Debug for InfoTable<A> {
 }
 
 impl<A> InfoTable<A> {
+    pub fn size_of() -> usize {
+        size_of::<Self>()
+    }
+
+    pub fn replace(&mut self, o: Self) {
+        replace(self, o);
+    }
+
     pub fn new(ptr_payloads: u16,
                word_payloads: u16,
                arity: u16,

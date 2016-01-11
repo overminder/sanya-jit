@@ -33,9 +33,9 @@ fn run_file(path: &str) -> io::Result<()> {
     // println!("smt = {:?}", universe.smt);
     unsafe {
         rust_entry(universe.as_ptr());
+        universe.gc_mut().print_stat();
     }
 
-    universe.gc.print_stat();
 
     Ok(())
 }

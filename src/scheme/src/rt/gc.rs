@@ -144,7 +144,7 @@ impl GcState {
                                       -> Option<Handle<A>> {
         let ptr = self.alloc_ptr;
         let advanced_to = self.alloc_ptr.offset(alloc_size as isize);
-        // Overflow? Should really happen here...
+        // Overflow? Should not really happen here...
         if advanced_to > self.alloc_limit {
             None
         } else {
@@ -233,9 +233,9 @@ mod tests {
             let handle_block = HandleBlock::new();
 
             // (In-order scavenging).
-            let mut p1 = gc.alloc(&pair_info, &handle_block);
-            let mut i1 = gc.alloc(&fixnum_info, &handle_block);
-            let mut i2 = gc.alloc(&fixnum_info, &handle_block);
+            let mut p1 = gc.alloc(&pair_info, &handle_block, None);
+            let mut i1 = gc.alloc(&fixnum_info, &handle_block, None);
+            let mut i2 = gc.alloc(&fixnum_info, &handle_block, None);
 
             i1.value = 999;
             i2.value = 888;

@@ -31,6 +31,14 @@ impl ScDefn {
         &self.name
     }
 
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub fn arity(&self) -> usize {
+        self.args.len()
+    }
+
     pub fn frame_descr(&self) -> &FrameDescr {
         &self.frame_descr
     }

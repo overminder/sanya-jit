@@ -3,7 +3,7 @@
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
-use rt::oop::{Closure, Fixnum, OopArray, IsOop, IsArray, Oop, Handle};
+use rt::oop::*;
 use rt::stackmap::{StackMap, StackMapTable, EXTRA_CALLER_SAVED_FRAME_SLOTS};
 use rt::inlinesym::InlineSym;
 
@@ -17,27 +17,45 @@ use std::mem::transmute;
 
 pub type JitEntry = unsafe extern "C" fn(*const Universe);
 
-pub struct ModuleContext {
-    jitmem: Option<JitMem>,
+pub struct CompiledModule {
+    emit: Emit,
+    smt: StackMapTable,
+    functions: HashMap<String, CompiledFunction>,
+}
+
+pub struct CompiledFunction {
+    offset: usize,
+    relocs: Vec<Reloc>,
+}
+
+pub enum Reloc {
+    Global(String),
+    Bool(bool),
+    Fixnum(i64),
+}
+
+pub fn compile(scdefns: &mut [ScDefn], universe: &Universe) -> CompiledModule {
+    let mut cc = ModuleCompiler::new();
+    for scdefn in scdefns {
+        cc.compile_scdefn(scdefn);
+    }
+    let ModuleCompiler { smt, functions, function_labels, emit } = cc;
+
+    let mut compiled_functions = HashMap::new();
+    for (name, func) in functions {
+        let offset = function_labels.get(name).unwrap().offset().unwrap();
+        compiled_functions.insert(name.to_owned(), CompiledFunction::new(offset, func.relocs()));
+    }
 }
 
 impl ModuleContext {
-    pub fn new() -> Self {
-        ModuleContext { jitmem: None }
-    }
-
     pub fn compile(&mut self, scdefns: Vec<ScDefn>, universe: &mut Universe) -> JitEntry {
-        let mut cc = ModuleCompiler::new();
-        for scdefn in scdefns {
-            cc.add_scdefn(scdefn);
-        }
         let entry_offset = {
             let (code, entry_offset) = cc.compile_all(universe);
             self.jitmem = Some(JitMem::new(code));
             entry_offset
         };
         let start = unsafe { self.jitmem.as_ref().unwrap().start() };
-        let ModuleCompiler { mut smt, .. } = cc;
         smt.set_start(start);
         universe.smt = Some(smt);
 
@@ -53,6 +71,19 @@ struct ModuleCompiler {
 }
 
 type LabelMap = HashMap<String, Label>;
+
+fn find_or_make_label(m: &mut LabelMap, name: &str) -> &mut Label {
+    match m.get_mut(name) {
+        Some(l) => return l,
+        None => (),
+    };
+
+    // HashMap.entry requires the key to be copied. Since the key being
+    // absent is a rare case, I'd rather use the traditional way and put
+    // the absent case here as the slow case.
+    m.insert(name.to_owned(), Label::new());
+    m.get_mut(name).unwrap()
+}
 
 impl ModuleCompiler {
     fn new() -> Self {
@@ -74,6 +105,9 @@ impl ModuleCompiler {
         for (_, ref mut f) in &mut self.functions {
             f.compile(&mut self.emit, &mut self.function_labels, &mut self.smt, u);
         }
+
+        // 2. Fill the global refs in the code and make toplevel closures.
+        // f.make_closure(&self.function_labels, u);
 
         // 2. Make a rust -> jitted main entry
         self.make_rust_entry(u)
@@ -130,11 +164,17 @@ impl ModuleCompiler {
 
 struct FunctionContext {
     scdefn: ScDefn,
+    inline_global_offsets: GlobalOffsetMap,
 }
+
+type GlobalOffsetMap = HashMap<String, usize>;
 
 impl FunctionContext {
     fn new(sc: ScDefn) -> Self {
-        FunctionContext { scdefn: sc }
+        FunctionContext {
+            scdefn: sc,
+            inline_global_offsets: [].iter().cloned().collect(),
+        }
     }
 
     fn compile(&mut self,
@@ -147,6 +187,11 @@ impl FunctionContext {
         // doc for the correct alignment.
         emit_nop_until_aligned(emit, 0x10);
 
+        // Make space for infotable.
+        let info = InfoTable::<Closure>::new(0, 0, self.scdefn.arity() as u16,
+                OopKind::Callable, "toplevel-closure(XXX)");
+        unsafe { emit.alloc(info); }
+
         // Bind the function entry. The unwrap here is safe the ModuleContext
         // has already initialized all the labels in the label map.
         emit.bind(labels.get_mut(self.scdefn.name()).unwrap());
@@ -157,7 +202,11 @@ impl FunctionContext {
 
         let stackmap = new_stackmap_with_frame_descr(self.scdefn.frame_descr());
         {
-            let mut nodecc = NodeCompiler::new(emit, labels, smt, u);
+            let mut nodecc = NodeCompiler::new(emit,
+                                               labels,
+                                               smt,
+                                               u,
+                                               &mut self.inline_global_offsets);
             nodecc.compile(self.scdefn.body_mut(), stackmap).unwrap();
         }
 
@@ -171,6 +220,7 @@ struct NodeCompiler<'a> {
     labels: &'a mut LabelMap,
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
+    inline_global_offsets: &'a mut GlobalOffsetMap,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -183,13 +233,15 @@ impl<'a> NodeCompiler<'a> {
     fn new(emit: &'a mut Emit,
            labels: &'a mut LabelMap,
            smt: &'a mut StackMapTable,
-           universe: &'a Universe)
+           universe: &'a Universe,
+           inline_global_offsets: &'a mut GlobalOffsetMap)
            -> Self {
         NodeCompiler {
             emit: emit,
             labels: labels,
             universe: universe,
             smt: smt,
+            inline_global_offsets: inline_global_offsets,
         }
     }
 
@@ -249,6 +301,12 @@ impl<'a> NodeCompiler<'a> {
     {
         self.emit.push(src);
         stackmap.push_word();
+    }
+
+    fn load_inline_global_ref(&mut self, name: &str, dst: R64) {
+        self.emit.mov(dst, 0_i64);
+        let offset = self.emit.here() - 8;
+        self.inline_global_offsets.insert(name.to_owned(), offset);
     }
 
     fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
@@ -363,7 +421,8 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(RAX, [RDI, RSI, RDX, RCX, R8, R9][arg_ix]);
             }
             &mut NReadGlobal(ref mut name) => {
-                self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
+                self.load_inline_global_ref(name, RAX);
+                // self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
             }
             &mut NReadLocal(ix) => {
                 self.emit.mov(RAX, &frame_slot(ix));
@@ -643,7 +702,7 @@ unsafe extern "C" fn alloc_ooparray(universe: &mut Universe, len: Oop, fill: Oop
     assert!(universe.oop_is_fixnum(len));
     let len: Handle<Fixnum> = universe.oop_handle(len);
     let fill: Handle<Closure> = universe.oop_handle(fill);
-    universe.new_ooparray(len.value as usize, fill).as_oop()
+    universe.new_ooparray(len.value as usize, &fill).as_oop()
 }
 
 unsafe extern "C" fn alloc_i64array(universe: &mut Universe, len: usize, fill: i64) -> Oop {

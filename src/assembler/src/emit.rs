@@ -1,5 +1,7 @@
 use byteorder::{ByteOrder, NativeEndian};
 
+use std::mem::{size_of, replace};
+
 pub struct Emit(Vec<u8>);
 
 impl Emit {
@@ -30,6 +32,18 @@ impl Emit {
 
     pub fn here(&self) -> usize {
         self.0.len()
+    }
+
+    pub unsafe fn alloc<'a, A: Sized>(&mut self, a: A) -> &'a mut A {
+        let size = size_of::<A>();
+        let here = self.0.as_mut_ptr();
+        self.0.reserve(size);
+        for _ in 0..size {
+            self.0.push(0);
+        }
+        let res = &mut *(here as *mut _);
+        replace(res, a);
+        res
     }
 
     pub fn patch_i32(&mut self, ix: usize, value: i32) {

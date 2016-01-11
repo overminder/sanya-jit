@@ -3,6 +3,19 @@ use super::nir::RawNode::*;
 
 use std::collections::HashSet;
 
+pub fn lint_scdefns(defns: &mut [ScDefn]) -> Result<(), String> {
+    let toplevel_names: HashSet<String> = defns.iter().map(|d| d.name().to_owned()).collect();
+    if !toplevel_names.contains("main") {
+        return Err("main not defined".to_owned());
+    }
+
+    let mut checker = CheckGlobal(&toplevel_names);
+    for defn in defns {
+        try!(defn.body_mut().traverse(&mut checker));
+    }
+    Ok(())
+}
+
 struct CheckGlobal<'a>(&'a HashSet<String>);
 
 impl<'a> NodeTraverser<String> for CheckGlobal<'a> {
@@ -17,17 +30,4 @@ impl<'a> NodeTraverser<String> for CheckGlobal<'a> {
         }
         Ok(TraversalDirection::Forward)
     }
-}
-
-pub fn lint_scdefns(defns: &mut [ScDefn]) -> Result<(), String> {
-    let toplevel_names: HashSet<String> = defns.iter().map(|d| d.name().to_owned()).collect();
-    if !toplevel_names.contains("main") {
-        return Err("main not defined".to_owned());
-    }
-
-    let mut checker = CheckGlobal(&toplevel_names);
-    for defn in defns {
-        try!(defn.body_mut().traverse(&mut checker));
-    }
-    Ok(())
 }
