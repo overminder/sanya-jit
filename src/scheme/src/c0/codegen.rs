@@ -8,20 +8,19 @@ use rt::inlinesym::InlineSym;
 use assembler::x64::*;
 use assembler::x64::R64::*;
 use assembler::emit::{Emit, Label};
-use assembler::mem::JitMem;
 
 use std::collections::HashMap;
 use std::mem::transmute;
 
 pub struct CompiledModule {
-    emit: Emit,
-    smt: StackMapTable,
-    functions: HashMap<String, CompiledFunction>,
+    pub emit: Emit,
+    pub smt: StackMapTable,
+    pub functions: HashMap<String, CompiledFunction>,
 }
 
 pub struct CompiledFunction {
-    offset: usize,
-    relocs: RelocTable,
+    pub entry_offset: usize,
+    pub relocs: RelocTable,
 }
 
 pub struct ModuleCompiler {
@@ -43,13 +42,13 @@ impl ModuleCompiler {
     }
 
     pub fn compile_function(&mut self, sc: &mut ScDefn, u: &Universe) {
-        let (offset, relocs) = compile_function(&mut self.emit,
-                                                &mut self.function_labels,
-                                                &mut self.smt,
-                                                sc,
-                                                u);
+        let func = compile_function(&mut self.emit,
+                                    &mut self.function_labels,
+                                    &mut self.smt,
+                                    sc,
+                                    u);
 
-        self.compiled_functions.insert(sc.name().to_owned(), CompiledFunction::new(offset, relocs));
+        self.compiled_functions.insert(sc.name().to_owned(), func);
     }
 
     pub fn into_compiled_module(self) -> CompiledModule {
@@ -68,7 +67,7 @@ fn compile_function(emit: &mut Emit,
                     labels: &mut LabelMap,
                     smt: &mut StackMapTable,
                     u: &Universe)
-                    -> (usize, RelocTable) {
+                    -> CompiledFunction {
     // Align the function entry.
     // XXX: I'm not sure if this is correct - need to read the AMD64 ABI
     // doc for the correct alignment.
@@ -104,7 +103,7 @@ fn compile_function(emit: &mut Emit,
 
     emit_epilogue(emit, true);
 
-    (entry_offset, reloc_table)
+    CompiledFunction::new(entry_offset, reloc_table)
 }
 
 fn find_or_make_label<'a, 'b>(m: &'a mut LabelMap, name: &'b str) -> &'a mut Label {
