@@ -1,9 +1,10 @@
+use super::shared::{Reloc, RelocTable};
+use super::compiled_rt::*;
 use ast::nir::*;
 use ast::nir::RawNode::*;
 use rt::*;
 use rt::oop::*;
 use rt::stackmap::{StackMap, StackMapTable, EXTRA_CALLER_SAVED_FRAME_SLOTS};
-use rt::inlinesym::InlineSym;
 
 use assembler::x64::*;
 use assembler::x64::R64::*;
@@ -24,7 +25,6 @@ pub struct CompiledFunction {
 }
 
 pub struct ModuleCompiler {
-    functions: HashMap<String, FunctionContext>,
     function_labels: LabelMap,
     smt: StackMapTable,
     emit: Emit,
@@ -34,18 +34,18 @@ pub struct ModuleCompiler {
 impl ModuleCompiler {
     pub fn new() -> Self {
         ModuleCompiler {
-            functions: HashMap::new(),
             function_labels: HashMap::new(),
+            compiled_functions: HashMap::new(),
             smt: StackMapTable::new(),
             emit: Emit::new(),
         }
     }
 
-    pub fn compile_function(&mut self, sc: &mut ScDefn, u: &Universe) {
+    pub fn compile_scdefn(&mut self, sc: &mut ScDefn, u: &Universe) {
         let func = compile_function(&mut self.emit,
+                                    sc,
                                     &mut self.function_labels,
                                     &mut self.smt,
-                                    sc,
                                     u);
 
         self.compiled_functions.insert(sc.name().to_owned(), func);
@@ -93,30 +93,30 @@ fn compile_function(emit: &mut Emit,
     //         labels.get(self.scdefn.name()).unwrap().offset().unwrap());
     emit_prologue(emit, scdefn.frame_descr().slot_count());
 
-    let mut reloc_table = HashMap::new();
+    let mut relocs = vec![];
 
     let stackmap = new_stackmap_with_frame_descr(scdefn.frame_descr());
     {
-        let mut nodecc = NodeCompiler::new(emit, labels, smt, u, &mut reloc_table);
+        let mut nodecc = NodeCompiler::new(emit, labels, smt, u, &mut relocs);
         nodecc.compile(scdefn.body_mut(), stackmap).unwrap();
     }
 
     emit_epilogue(emit, true);
 
-    CompiledFunction::new(entry_offset, reloc_table)
+    CompiledFunction {
+        entry_offset: entry_offset,
+        relocs: relocs,
+    }
 }
 
-fn find_or_make_label<'a, 'b>(m: &'a mut LabelMap, name: &'b str) -> &'a mut Label {
-    match m.get_mut(name) {
-        Some(l) => return l,
-        None => (),
-    };
+fn find_or_make_label<'a>(m: &'a mut LabelMap, name: &str) -> &'a mut Label {
+    use std::collections::hash_map::Entry::*;
 
-    // HashMap.entry requires the key to be copied. Since the key being
-    // absent is a rare case, I'd rather use the traditional way and put
-    // the absent case here as the slow case.
-    m.insert(name.to_owned(), Label::new());
-    m.get_mut(name).unwrap()
+    // XXX: HashMap.entry requires the key to be copied.  Hmm...
+    match m.entry(name.to_owned()) {
+        Vacant(v) => v.insert(Label::new()),
+        Occupied(o) => o.into_mut(),
+    }
 }
 
 struct NodeCompiler<'a> {
@@ -124,7 +124,7 @@ struct NodeCompiler<'a> {
     labels: &'a mut LabelMap,
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
-    inline_global_offsets: &'a mut GlobalOffsetMap,
+    relocs: &'a mut RelocTable,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -138,14 +138,14 @@ impl<'a> NodeCompiler<'a> {
            labels: &'a mut LabelMap,
            smt: &'a mut StackMapTable,
            universe: &'a Universe,
-           inline_global_offsets: &'a mut GlobalOffsetMap)
+           relocs: &'a mut RelocTable)
            -> Self {
         NodeCompiler {
             emit: emit,
             labels: labels,
             universe: universe,
             smt: smt,
-            inline_global_offsets: inline_global_offsets,
+            relocs: relocs,
         }
     }
 
@@ -207,19 +207,20 @@ impl<'a> NodeCompiler<'a> {
         stackmap.push_word();
     }
 
-    fn load_inline_global_ref(&mut self, name: &str, dst: R64) {
+    fn load_reloc(&mut self, dst: R64, value: Reloc) {
         self.emit.mov(dst, 0_i64);
         let offset = self.emit.here() - 8;
-        self.inline_global_offsets.insert(name.to_owned(), offset);
+        self.relocs.push((offset, value))
     }
 
     fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
         match node {
             &mut NMkFixnum(i) => {
-                self.emit_fixnum_allocation(stackmap);
-                self.emit
-                    .mov(TMP, i as i64)
-                    .mov(&(RAX + 8), TMP);
+                self.load_reloc(RAX, Reloc::Fixnum(i as i64));
+                // self.emit_fixnum_allocation(stackmap);
+                // self.emit
+                //    .mov(TMP, i as i64)
+                //    .mov(&(RAX + 8), TMP);
             }
             &mut NMkOopArray(ref mut len, ref mut fill) => {
                 let mut precall_map = stackmap;
@@ -325,7 +326,7 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(RAX, [RDI, RSI, RDX, RCX, R8, R9][arg_ix]);
             }
             &mut NReadGlobal(ref mut name) => {
-                self.load_inline_global_ref(name, RAX);
+                self.load_reloc(RAX, Reloc::Global(name.to_owned()));
                 // self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
             }
             &mut NReadLocal(ix) => {
@@ -568,43 +569,36 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
 fn make_rust_entry(emit: &mut Emit, main_label: &mut Label) -> usize {
     // 1. Build up an entry.
     let mut entry = Label::new();
-    emit_nop_until_aligned(&mut emit, 0x10);
+    emit_nop_until_aligned(emit, 0x10);
 
     // Standard prologue.
-    self.emit
-        .bind(&mut entry)
+    emit.bind(&mut entry)
         .push(RBP)
         .mov(RBP, RSP);
 
     // Save the callee-saved regs clobbered by our runtime.
-    self.emit
-        .push(ALLOC_PTR)
+    emit.push(ALLOC_PTR)
         .push(UNIVERSE_PTR);
 
     // Get the relevant regs from/to the runtime state.
-    self.emit
-        .mov(UNIVERSE_PTR, RDI)
+    emit.mov(UNIVERSE_PTR, RDI)
         .mov(&universe_base_rbp(), RBP)
         .mov(ALLOC_PTR, &universe_alloc_ptr());
 
     // Enter the real main.
-    self.emit
-        .call(main_label);
+    emit.call(main_label);
 
     // Sync back the regs to the runtime state.
-    self.emit
-        .mov(&universe_alloc_ptr(), ALLOC_PTR)
+    emit.mov(&universe_alloc_ptr(), ALLOC_PTR)
         .mov(TMP, 0)
         .mov(&universe_saved_rbp(), TMP);
 
     // Restore the saved regs.
-    self.emit
-        .pop(UNIVERSE_PTR)
+    emit.pop(UNIVERSE_PTR)
         .pop(ALLOC_PTR);
 
     // Standard epilogue.
-    self.emit
-        .mov(RSP, RBP)
+    emit.mov(RSP, RBP)
         .pop(RBP)
         .ret();
 

@@ -3,6 +3,7 @@
 #![feature(box_syntax)]
 
 extern crate assembler;
+extern crate byteorder;
 
 pub mod ast;
 pub mod rt;

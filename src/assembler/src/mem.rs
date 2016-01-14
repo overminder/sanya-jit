@@ -11,10 +11,10 @@ pub struct JitMem {
 impl JitMem {
     pub fn new(bs: &[u8]) -> Self {
         let inner = MemoryMap::new(bs.len(), &[MapReadable, MapWritable, MapExecutable]).unwrap();
-        let thiz = JitMem { inner: inner };
+        let mut thiz = JitMem { inner: inner };
 
-        unsafe {
-            let inner_slice = thiz.inner_slice_mut();
+        {
+            let inner_slice = thiz.as_mut();
             for (dst, src) in inner_slice.iter_mut().zip(bs.iter()) {
                 *dst = *src;
             }
@@ -22,12 +22,16 @@ impl JitMem {
         thiz
     }
 
-    unsafe fn inner_slice_mut(&self) -> &mut [u8] {
-        slice::from_raw_parts_mut(self.inner.data(), self.inner.len())
+    pub fn as_word(&self) -> usize {
+        unsafe { transmute(self.inner.data()) }
+    }
+
+    pub fn start(&self) -> usize {
+        self.as_word()
     }
 
     pub unsafe fn call_ptr_ptr(&self, arg: isize) -> isize {
-        let as_fn: extern "C" fn(isize) -> isize = transmute(self.inner_slice_mut().as_ptr());
+        let as_fn: extern "C" fn(isize) -> isize = transmute(self.as_word());
         as_fn(arg)
     }
 
@@ -40,11 +44,20 @@ impl JitMem {
                                 arg6: isize)
                                 -> isize {
         let as_fn: extern "C" fn(isize, isize, isize, isize, isize, isize) -> isize =
-            transmute(self.inner_slice_mut().as_ptr());
+            transmute(self.as_word());
         as_fn(arg1, arg2, arg3, arg4, arg5, arg6)
     }
+}
 
-    pub unsafe fn start(&self) -> usize {
-        transmute(self.inner_slice_mut().as_ptr())
+impl AsRef<[u8]> for JitMem {
+    fn as_ref(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.inner.data(), self.inner.len()) }
     }
 }
+
+impl AsMut<[u8]> for JitMem {
+    fn as_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.inner.data(), self.inner.len()) }
+    }
+}
+

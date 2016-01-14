@@ -1,4 +1,13 @@
+use super::shared::*;
+use super::codegen::CompiledModule;
+use rt::*;
+use rt::oop::*;
+use rt::stackmap::StackMapTable;
 use assembler::mem::JitMem;
+
+use std::collections::HashMap;
+use std::mem::transmute;
+use byteorder::{NativeEndian, ByteOrder};
 
 pub type JitEntry = unsafe extern "C" fn(*const Universe);
 
@@ -10,57 +19,33 @@ pub struct LinkedModule {
 
 impl LinkedModule {
     pub unsafe fn new(cm: CompiledModule, u: &Universe) -> Self {
-        let jitmem = JitMem::new(cm.emit.as_ref());
+        let mut jitmem = JitMem::new(cm.emit.as_ref());
         let start = jitmem.start();
 
-        let mut global_closures = HashMap::new();
+        let mut global_closures: GlobalTable = HashMap::new();
 
         // Make closures.
-        for (func_name, func) in cm.functions {
+        for (func_name, ref func) in &cm.functions {
             let info = InfoTable::from_entry(start + func.entry_offset);
-            global_closures.insert(func_name.to_owned(), u.alloc_closure(info));
+            global_closures.insert(func_name.to_owned(), u.new_closure(info));
         }
 
-        for (func_name, func) in cm.functions {
-            for (reloc_offset, reloc) in func.relocs {
+        for (func_name, ref func) in &cm.functions {
+            for (reloc_offset, ref reloc) in &func.relocs {
                 let val = reloc.reify(&global_closures, u);
-                jitmem.write_i64(reloc_offset, val);
+                NativeEndian::write_u64(&mut jitmem.as_mut()[reloc_offset..], val as u64);
             }
         }
 
         LinkedModule {
             jitmem: jitmem,
-            entry_offset: entry_offset,
+            entry_offset: panic!("make_rust_entry"),
             smt: cm.smt,
         }
     }
 
     pub unsafe fn call_entry(&self, u: &Universe) {
-        let entry = transmute::<_, JitEntry>(jitmem.start() + self.entry_offset);
+        let entry = transmute::<_, JitEntry>(self.jitmem.start() + self.entry_offset);
         entry(u as *const _);
     }
 }
-
-pub type RelocTable = Vec<(usize, Reloc)>;
-
-#[derive(Debug)]
-pub enum Reloc {
-    Global(String),
-    Bool(bool),
-    Fixnum(i64),
-}
-
-type GlobalTable = HashMap<String, Handle<Closure>>;
-
-impl Reloc {
-    fn reify(&self, globals: &GlobalTable, u: &Universe) -> Oop {
-        use self::Reloc::*;
-
-        match self {
-            &Global(name) -> globals[name].as_oop(),
-            &Fixnum(v) -> u.alloc_fixnum(v).as_oop(),
-            _ -> panic!("Not implemented: {:?}", self),
-        }
-    }
-}
-

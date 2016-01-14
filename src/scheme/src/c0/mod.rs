@@ -3,13 +3,16 @@
 pub mod codegen;
 pub mod linking;
 mod compiled_rt;
+mod shared;
 
-use self::codegen::CompiledModule;
+use self::codegen::{ModuleCompiler, CompiledModule};
+use rt::Universe;
+use ast::nir::ScDefn;
 
-pub fn compile(scdefns: &mut [ScDefn], universe: &Universe) -> CompiledModule {
+pub fn compile(scdefns: &mut [ScDefn], u: &Universe) -> CompiledModule {
     let mut mc = ModuleCompiler::new();
     for scdefn in scdefns {
-        mc.compile_scdefn(scdefn);
+        mc.compile_scdefn(scdefn, u);
     }
     mc.into_compiled_module()
 }
