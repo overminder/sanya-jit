@@ -130,6 +130,10 @@ impl Label {
     pub fn new() -> Self {
         Label::Unbound { patch_ixs: vec![] }
     }
+
+    pub fn from_offset(offset: usize) -> Self {
+        Label::Bound { offset: offset }
+    }
 }
 
 // Safety check against using labels without binding them.

@@ -92,10 +92,16 @@ fn compile_function(emit: &mut Emit,
     // println!("Function {}'s offset is {}",
     //         self.scdefn.name(),
     //         labels.get(self.scdefn.name()).unwrap().offset().unwrap());
-    let stackmap = emit_prologue(emit, scdefn.frame_descr());
+    let (stackmap, bare_entry) = emit_prologue(emit, scdefn.frame_descr());
     let mut relocs = vec![];
     {
-        let mut nodecc = NodeCompiler::new(emit, smt, u, &mut relocs, entry_offset);
+        let mut nodecc = NodeCompiler::new(emit,
+                                           smt,
+                                           u,
+                                           &mut relocs,
+                                           entry_offset,
+                                           bare_entry,
+                                           scdefn.name().to_owned());
         nodecc.compile(scdefn.body_mut(), stackmap).unwrap();
     }
 
@@ -129,7 +135,9 @@ struct NodeCompiler<'a> {
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
     relocs: &'a mut RelocTable,
+    sc_name: String,
     entry_offset: usize,
+    bare_entry_offset: usize,
 }
 
 type CgResult<A> = Result<A, String>;
@@ -139,7 +147,9 @@ impl<'a> NodeCompiler<'a> {
            smt: &'a mut StackMapTable,
            universe: &'a Universe,
            relocs: &'a mut RelocTable,
-           entry_offset: usize)
+           entry_offset: usize,
+           bare_entry_offset: usize,
+           sc_name: String)
            -> Self {
         NodeCompiler {
             emit: emit,
@@ -147,6 +157,8 @@ impl<'a> NodeCompiler<'a> {
             smt: smt,
             relocs: relocs,
             entry_offset: entry_offset,
+            bare_entry_offset: bare_entry_offset,
+            sc_name: sc_name,
         }
     }
 
@@ -270,6 +282,13 @@ impl<'a> NodeCompiler<'a> {
                     self.emit.pop(*r);
                 }
                 if is_tail {
+                    if let &mut NReadGlobal(ref mut name) = func.as_mut() {
+                        // XXX: Hmm... Is this good?
+                        if name == &self.sc_name && OPTIMIZE_KNOWN_SELF_CALL {
+                            self.emit.jmp(&mut Label::from_offset(self.bare_entry_offset));
+                            return Ok(());
+                        }
+                    }
                     emit_epilogue(self.emit, false);
                     self.emit.jmp(&Addr::B(CLOSURE_PTR));
                 } else {
@@ -475,13 +494,13 @@ impl<'a> NodeCompiler<'a> {
             .mov(&Addr::B(RAX), TMP);
     }
 
+    // Try to select some better instructions.
+    // XXX: Unify jcc and cmovcc generations.
     fn emit_optimized_if_cmp(&mut self,
                              node: &mut RawNode,
                              label_false: &mut Label,
                              mut map0: StackMap)
                              -> CgResult<bool> {
-
-        // Try to select some better instructions.
         Ok(match node {
             &mut NPrimFF(op, ref mut lhs, ref mut rhs) if op_is_cond(op) => {
                 try!(self.compile(rhs, map0));
@@ -551,7 +570,7 @@ fn frame_slot(ix: usize) -> Addr {
     Addr::BD(RBP, -8 * ((1 + EXTRA_CALLER_SAVED_FRAME_SLOTS + ix) as i32))
 }
 
-fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> StackMap {
+fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize) {
     emit.push(RBP)
         .mov(RBP, RSP)
         .push(CLOSURE_PTR);
@@ -560,7 +579,10 @@ fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> StackMap {
     if frame_slots != 0 {
         emit.add(RSP, -8 * (frame_slots as i32));
     }
-    new_stackmap_with_frame_descr(frame_descr)
+
+    let bare_entry = emit.here();
+
+    (new_stackmap_with_frame_descr(frame_descr), bare_entry)
 }
 
 fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
@@ -637,3 +659,4 @@ const ALLOC_PTR: R64 = R12;
 const UNIVERSE_PTR: R64 = R13;
 
 const OPTIMIZE_IF_CMP: bool = true;
+const OPTIMIZE_KNOWN_SELF_CALL: bool = true;

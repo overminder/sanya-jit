@@ -26,8 +26,7 @@ pub fn compile_scdefn(e: &SExpr) -> ScDefn {
                     let read_arg_nodes: NodeList = args.iter()
                                                        .enumerate()
                                                        .map(|(nth_arg, name)| {
-                                                           let local_ix =
-                                                               frame.find_or_create_slot(name);
+                                                           let local_ix = frame.create_slot(name);
                                                            NWriteLocal(local_ix,
                                                                        box NReadArgument(nth_arg))
                                                        })
@@ -55,7 +54,7 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
         &List(ref es) => {
             match es.as_slice() {
                 [Sym(ref tag), Sym(ref name), ref form] if tag == "define" => {
-                    let ix = frame.find_or_create_slot(name);
+                    let ix = frame.create_slot(name);
                     NWriteLocal(ix, box compile_expr(form, frame, is_tail))
                 }
                 [Sym(ref tag), ref arr, ref ix] if tag == "nth#" => {

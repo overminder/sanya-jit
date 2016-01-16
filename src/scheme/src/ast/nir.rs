@@ -74,9 +74,9 @@ impl FrameDescr {
         self.name_to_ix.get(name).cloned()
     }
 
-    pub fn find_or_create_slot(&mut self, name: &str) -> usize {
-        if let Some(ix) = self.lookup_slot(name) {
-            return ix;
+    pub fn create_slot(&mut self, name: &str) -> usize {
+        if let Some(_) = self.lookup_slot(name) {
+            panic!("Duplicated slot: {}", name);
         }
 
         let ix = self.next_ix;
