@@ -1,7 +1,9 @@
 use super::oop::Oop;
 
+use fnv::FnvHasher;
 use std::mem::transmute;
 use std::collections::HashMap;
+use std::collections::hash_state::DefaultState;
 
 /// Frame Layout:
 ///
@@ -40,18 +42,22 @@ unsafe fn read_word(ptr: usize, offset: isize) -> usize {
     *(((ptr as isize) + offset) as *const usize)
 }
 
+// Still, the impact on the performance is quite minor. It seems that using a
+// BTreeMap could sometimes be faster than using a HashMap<FnvHasher>...
+type PcRelToStackMap = HashMap<usize, StackMap, DefaultState<FnvHasher>>;
+
 // Maps the rip offsets for return addresses to stackmaps.
 #[derive(Debug, Default)]
 pub struct StackMapTable {
     start: Option<usize>,
-    offsets: HashMap<usize, StackMap>,
+    offsets: PcRelToStackMap,
 }
 
 impl StackMapTable {
     pub fn new() -> Self {
         StackMapTable {
             start: None,
-            offsets: [].iter().cloned().collect(),
+            offsets: Default::default(),
         }
     }
 

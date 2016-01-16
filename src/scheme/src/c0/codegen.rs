@@ -132,6 +132,8 @@ struct NodeCompiler<'a> {
     entry_offset: usize,
 }
 
+type CgResult<A> = Result<A, String>;
+
 impl<'a> NodeCompiler<'a> {
     fn new(emit: &'a mut Emit,
            smt: &'a mut StackMapTable,
@@ -213,7 +215,7 @@ impl<'a> NodeCompiler<'a> {
         self.relocs.push((offset - self.entry_offset, value))
     }
 
-    fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
+    fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> CgResult<()> {
         match node {
             &mut NMkFixnum(i) => {
                 self.load_reloc(RAX, Reloc::Fixnum(i as i64));
@@ -280,24 +282,8 @@ impl<'a> NodeCompiler<'a> {
                 let mut label_false = Label::new();
                 let mut label_done = Label::new();
 
-                let special_case = if let &mut NPrimFF(op, ref mut lhs, ref mut rhs) =
-                                          cond.as_mut() {
-                    if op_is_cond(op) && OPTIMIZE_IF_CMP {
-                        let mut map0 = stackmap;
-                        try!(self.compile(rhs, map0));
-                        self.push_oop(RAX, &mut map0);
-                        try!(self.compile(lhs, map0));
-                        self.emit
-                            .mov(RAX, &(RAX + 8))
-                            .pop(TMP)
-                            .mov(TMP, &(TMP + 8))
-                            .cmp(RAX, TMP)
-                            .jcc(op_to_cond(op).inverse(), &mut label_false);
-
-                        true
-                    } else {
-                        false
-                    }
+                let special_case = if OPTIMIZE_IF_CMP {
+                    try!(self.emit_optimized_if_cmp(cond.as_mut(), &mut label_false, stackmap))
                 } else {
                     false
                 };
@@ -443,19 +429,13 @@ impl<'a> NodeCompiler<'a> {
                     }
                     PrimOpO::Fixnump => {
                         self.emit
-                            .mov(RAX, &Addr::B(RAX))
                             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
-                            .cmp(RAX, TMP)
-                            .mov(TMP, 1)
-                            .mov(RAX, 0)
-                            .cmove(RAX, TMP);
+                            .cmp(TMP, &Addr::B(RAX));
 
-                        let mut map0 = stackmap;
-                        self.push_word(RAX, &mut map0);
-                        self.emit_fixnum_allocation(map0);
-                        self.emit
-                            .pop(TMP)
-                            .mov(&(RAX + 8), TMP);
+                        self.load_reloc(TMP, Reloc::Fixnum(1));
+                        self.load_reloc(RAX, Reloc::Fixnum(0));
+
+                        self.emit.cmove(RAX, TMP);
                     }
                 }
             }
@@ -493,6 +473,38 @@ impl<'a> NodeCompiler<'a> {
             .bind(&mut label_alloc_success)
             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
             .mov(&Addr::B(RAX), TMP);
+    }
+
+    fn emit_optimized_if_cmp(&mut self,
+                             node: &mut RawNode,
+                             label_false: &mut Label,
+                             mut map0: StackMap)
+                             -> CgResult<bool> {
+
+        // Try to select some better instructions.
+        Ok(match node {
+            &mut NPrimFF(op, ref mut lhs, ref mut rhs) if op_is_cond(op) => {
+                try!(self.compile(rhs, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(lhs, map0));
+                self.emit
+                    .mov(RAX, &(RAX + 8))
+                    .pop(TMP)
+                    .mov(TMP, &(TMP + 8))
+                    .cmp(RAX, TMP)
+                    .jcc(op_to_cond(op).inverse(), label_false);
+                true
+            }
+            &mut NPrimO(PrimOpO::Fixnump, ref mut rand) => {
+                try!(self.compile(rand, map0));
+                self.emit
+                    .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
+                    .cmp(TMP, &Addr::B(RAX))
+                    .jne(label_false);
+                true
+            }
+            _ => false,
+        })
     }
 }
 

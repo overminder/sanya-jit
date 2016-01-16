@@ -22,13 +22,16 @@ extern "rust-intrinsic" {
 }
 
 fn run_file(path: &str) -> io::Result<()> {
+    let break_before_main = env::var("SCM_CG_DEBUG").map(|_| true).unwrap_or(false);
+    let heap_size = env::var("SCM_HEAP_SIZE").map(|x| x.parse().unwrap()).unwrap_or(0x10000);
+
     let mut src = String::new();
     {
         let mut f = try!(File::open(path));
         try!(f.read_to_string(&mut src));
     }
 
-    let mut universe = Universe::new(0x10000);
+    let mut universe = Universe::new(heap_size);
 
     let es = parse_many(&src).unwrap();
     // println!("Parsed sexpr: {:?}", es);
@@ -39,7 +42,9 @@ fn run_file(path: &str) -> io::Result<()> {
     let linked = c0::link(c0::compile(&mut scdefns, &universe), &universe);
     // println!("smt = {:?}", linked.smt());
     unsafe {
-        // breakpoint();
+        if break_before_main {
+            breakpoint();
+        }
         linked.call_entry(&mut universe);
         universe.gc_mut().log_stat();
     }
