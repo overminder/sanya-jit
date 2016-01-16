@@ -1,14 +1,15 @@
 use super::sexpr::*;
 use super::sexpr::SExpr::*;
+use super::id::*;
 use super::nir::*;
 use super::nir::RawNode::*;
 use rt::inlinesym::InlineSym;
 
-fn unwrap_sym_list(e: &SExpr) -> Result<Vec<String>, String> {
+fn unwrap_sym_list(e: &SExpr) -> Result<Vec<Id>, String> {
     let es = try!(e.unwrap_list());
     let mut res = vec![];
     for e in es {
-        res.push(try!(e.unwrap_sym()).to_owned());
+        res.push(Id::named(try!(e.unwrap_sym())));
     }
     Ok(res)
 }
@@ -23,16 +24,16 @@ pub fn compile_scdefn(e: &SExpr) -> ScDefn {
                                                                  form[1].is_list() => {
                     let mut frame = FrameDescr::new();
                     let args = unwrap_sym_list(&form[1]).unwrap();
-                    let read_arg_nodes: NodeList = args.iter()
-                                                       .enumerate()
-                                                       .map(|(nth_arg, name)| {
-                                                           let local_ix = frame.create_local_slot(name);
-                                                           NWriteLocal(local_ix,
-                                                                       box NReadArgument(nth_arg))
-                                                       })
-                                                       .collect();
+                    let read_arg_nodes: NodeList =
+                        args.iter()
+                            .enumerate()
+                            .map(|(nth_arg, name)| {
+                                let local_ix = frame.create_local_slot(name.to_owned());
+                                NWriteLocal(local_ix, box NReadArgument(nth_arg))
+                            })
+                            .collect();
                     let body = compile_expr_seq(&form[2..], &mut frame, true);
-                    ScDefn::new(name.to_owned(),
+                    ScDefn::new(Id::named(name),
                                 args,
                                 frame,
                                 body.prepend_nodes(read_arg_nodes).into_nseq())
@@ -49,7 +50,7 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
         &List(ref es) => {
             match es.as_slice() {
                 [Sym(ref tag), Sym(ref name), ref form] if tag == "define" => {
-                    let ix = frame.create_local_slot(name);
+                    let ix = frame.create_local_slot(Id::named(name));
                     NWriteLocal(ix, box compile_expr(form, frame, is_tail))
                 }
                 [Sym(ref tag), ref arr, ref ix] if tag == "nth#" => {
@@ -139,10 +140,11 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
         }
         &Int(ref ival) => NMkFixnum(*ival as isize),
         &Sym(ref name) => {
-            match frame.lookup_slot(name) {
+            let name = Id::named(name);
+            match frame.lookup_slot(&name) {
                 Some(&Slot::Local(ix)) => NReadLocal(ix),
                 Some(&Slot::UpVal(ix)) => NReadUpVal(ix),
-                None => NReadGlobal(name.to_owned()),
+                None => NReadGlobal(name),
             }
         }
     }
@@ -171,9 +173,9 @@ impl NSeq0 {
 fn compile_expr_seq(es: &[SExpr], frame: &mut FrameDescr, is_tail: bool) -> NSeq0 {
     assert!(es.len() >= 1);
     let body = es[..es.len() - 1]
-        .iter()
-        .map(|e| compile_expr(e, frame, false))
-        .collect();
+                   .iter()
+                   .map(|e| compile_expr(e, frame, false))
+                   .collect();
     let last = compile_expr(es.last().unwrap(), frame, is_tail);
     NSeq0(body, last)
 }

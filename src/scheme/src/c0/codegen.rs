@@ -1,6 +1,7 @@
 use super::shared::{Reloc, RelocTable};
 use super::compiled_rt::*;
 use ast::nir::*;
+use ast::id::*;
 use ast::nir::RawNode::*;
 use rt::*;
 use rt::oop::*;
@@ -16,7 +17,7 @@ use std::mem::transmute;
 pub struct CompiledModule {
     pub emit: Emit,
     pub smt: StackMapTable,
-    pub functions: HashMap<String, CompiledFunction>,
+    pub functions: HashMap<Id, CompiledFunction>,
 }
 
 pub struct CompiledFunction {
@@ -29,7 +30,7 @@ pub struct ModuleCompiler {
     function_labels: LabelMap,
     smt: StackMapTable,
     emit: Emit,
-    compiled_functions: HashMap<String, CompiledFunction>,
+    compiled_functions: HashMap<Id, CompiledFunction>,
 }
 
 impl ModuleCompiler {
@@ -61,7 +62,7 @@ impl ModuleCompiler {
     }
 }
 
-type LabelMap = HashMap<String, Label>;
+type LabelMap = HashMap<Id, Label>;
 
 fn compile_function(emit: &mut Emit,
                     scdefn: &mut ScDefn,
@@ -79,7 +80,7 @@ fn compile_function(emit: &mut Emit,
                                          0,
                                          scdefn.arity() as u16,
                                          OopKind::Callable,
-                                         scdefn.name());
+                                         &scdefn.name().to_string());
     unsafe {
         emit.alloc(info);
     }
@@ -114,7 +115,7 @@ fn compile_function(emit: &mut Emit,
     }
 }
 
-fn find_or_make_label<'a>(m: &'a mut LabelMap, name: &str) -> &'a mut Label {
+fn find_or_make_label<'a>(m: &'a mut LabelMap, name: &Id) -> &'a mut Label {
     use std::collections::hash_map::Entry::*;
 
     // XXX: HashMap.entry requires the key to be copied.  Hmm...
@@ -135,7 +136,7 @@ struct NodeCompiler<'a> {
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
     relocs: &'a mut RelocTable,
-    sc_name: String,
+    sc_name: Id,
     entry_offset: usize,
     bare_entry_offset: usize,
 }
@@ -149,7 +150,7 @@ impl<'a> NodeCompiler<'a> {
            relocs: &'a mut RelocTable,
            entry_offset: usize,
            bare_entry_offset: usize,
-           sc_name: String)
+           sc_name: Id)
            -> Self {
         NodeCompiler {
             emit: emit,

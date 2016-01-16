@@ -17,10 +17,10 @@ pub unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {
         println!("Frame {}: {:?}", frame_no, frame);
         for (slot_no, oop_slot) in frame.iter_oop().enumerate() {
             let oop = *oop_slot;
-            println!("  Slot {}: *{:#x} = {}",
+            println!("  Slot {}: *{:#x} = {:?}",
                      slot_no,
                      transmute::<_, usize>(oop_slot),
-                     oop);
+                     FmtOop(oop, universe));
         }
     }
 

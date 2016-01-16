@@ -4,6 +4,7 @@
 /// approach of specializing nodes by partial evaluation.
 
 use self::RawNode::*;
+use super::id::*;
 
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -11,14 +12,14 @@ use std::collections::HashMap;
 /// A supercombinator is a top-level function without free variables.
 #[derive(Debug)]
 pub struct ScDefn {
-    name: String,
-    args: Vec<String>,
+    name: Id,
+    args: Vec<Id>,
     frame_descr: FrameDescr,
     body: RawNode,
 }
 
 impl ScDefn {
-    pub fn new(name: String, args: Vec<String>, frame_descr: FrameDescr, body: RawNode) -> Self {
+    pub fn new(name: Id, args: Vec<Id>, frame_descr: FrameDescr, body: RawNode) -> Self {
         ScDefn {
             name: name,
             args: args,
@@ -27,11 +28,11 @@ impl ScDefn {
         }
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &Id {
         &self.name
     }
 
-    pub fn args(&self) -> &[String] {
+    pub fn args(&self) -> &[Id] {
         &self.args
     }
 
@@ -53,12 +54,6 @@ impl ScDefn {
 }
 
 #[derive(Debug, Clone)]
-pub enum Id {
-    Named(String),
-    Unnamed(usize),
-}
-
-#[derive(Debug)]
 pub enum Slot {
     Local(usize),
     UpVal(usize),
@@ -68,16 +63,21 @@ pub enum Slot {
 pub struct FrameDescr {
     next_local_ix: usize,
     next_upval_ix: usize,
+
+    // List of upvals required to build this closure.
+    upval_refs: Vec<Slot>,
+
     slot_map: SlotMap,
 }
 
-type SlotMap = HashMap<String, Slot>;
+type SlotMap = HashMap<Id, Slot>;
 
 impl FrameDescr {
     pub fn new() -> Self {
         FrameDescr {
             next_local_ix: 0,
             next_upval_ix: 0,
+            upval_refs: vec![],
             slot_map: Default::default(),
         }
     }
@@ -86,29 +86,34 @@ impl FrameDescr {
         self.next_local_ix
     }
 
-    pub fn lookup_slot(&self, name: &str) -> Option<&Slot> {
+    pub fn lookup_slot(&self, name: &Id) -> Option<&Slot> {
         self.slot_map.get(name)
     }
 
-    fn create_slot(&mut self, name: &str, slot: Slot) -> &Slot {
+    fn create_slot(&mut self, name: Id, slot: Slot) -> &Slot {
         use std::collections::hash_map::Entry::*;
 
-        match self.slot_map.entry(name.to_owned()) {
-            Occupied(_) => panic!("Duplicated slot: {}", name),
+        if self.slot_map.contains_key(&name) {
+            panic!("Duplicated slot: {:?}", name);
+        }
+
+        match self.slot_map.entry(name) {
             Vacant(v) => v.insert(slot),
+            _ => panic!("Shouldn't happen"),
         }
     }
 
-    pub fn create_local_slot(&mut self, name: &str) -> usize {
+    pub fn create_local_slot(&mut self, name: Id) -> usize {
         let ix = self.next_local_ix;
         self.next_local_ix += 1;
         self.create_slot(name, Slot::Local(ix));
         ix
     }
 
-    fn create_upval_slot(&mut self, name: &str) -> &Slot {
+    fn create_upval_slot(&mut self, name: Id, outer_slot: Slot) -> &Slot {
         let ix = self.next_upval_ix;
         self.next_upval_ix += 1;
+        self.upval_refs.push(outer_slot);
         let res = self.create_slot(name, Slot::UpVal(ix));
         res
     }
@@ -137,15 +142,15 @@ impl<'a> FrameDescrChain<'a> {
     // Oops, borrowck bug (rust-lang/rfcs#811)...
     // Fortunately Edward has a solution here:
     // http://blog.ezyang.com/2013/12/two-bugs-in-the-borrow-checker-every-rust-developer-should-know-about/
-    pub fn lookup_slot<A, F: FnOnce(Option<&Slot>) -> A>(&mut self, name: &str, f: F) -> A {
+    pub fn lookup_slot<A, F: FnOnce(Option<&Slot>) -> A>(&mut self, name: &Id, f: F) -> A {
         if let x @ Some(_) = self.fd.lookup_slot(name) {
             return f(x);
         }
 
         match self.outer.as_mut() {
             Some(outer) => {
-                if outer.lookup_slot(name, |x| x.is_some()) {
-                    return f(Some(self.fd.create_upval_slot(name)));
+                if let Some(outer_slot) = outer.lookup_slot(name, |x| x.cloned()) {
+                    return f(Some(self.fd.create_upval_slot(name.to_owned(), outer_slot)));
                 }
             }
             _ => (),
@@ -162,7 +167,7 @@ pub enum RawNode {
     NMkPair(Node, Node),
     NMkOopArray(Node /* length */, Node /* fill */),
     NMkI64Array(Node /* length */, Node /* fill */),
-    NMkClosure(Vec<String>, Node),
+    NMkClosure(Vec<Id>, Node),
 
     // Control flows.
     NCall {
@@ -179,7 +184,7 @@ pub enum RawNode {
 
     // Storage manipulations.
     NReadArgument(usize),
-    NReadGlobal(String),
+    NReadGlobal(Id),
     // NReadClosure(usize),
     NReadLocal(usize),
     NReadUpVal(usize),

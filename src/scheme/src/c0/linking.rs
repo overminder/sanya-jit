@@ -1,5 +1,6 @@
 use super::shared::*;
 use super::codegen::{CompiledModule, make_rust_entry};
+use ast::id::Id;
 use rt::*;
 use rt::oop::*;
 use rt::stackmap::StackMapTable;
@@ -34,7 +35,7 @@ impl LinkedModule {
             let closure = u.new_closure(info);  // Allocates
             global_closures.insert(func_name.to_owned(), closure);
 
-            debug!("Closure/{}: [{:#x},{:#x})",
+            debug!("Closure {:?}: [{:#x},{:#x})",
                    func_name,
                    start + func.entry_offset,
                    start + func.end_offset);
@@ -59,7 +60,7 @@ impl LinkedModule {
         LinkedModule {
             jitmem: jitmem,
             rust_entry_offset: rust_entry_offset,
-            main_closure: global_closures["main"].dup(),
+            main_closure: global_closures[&Id::named("main")].dup(),
             smt: cm.smt,
         }
     }

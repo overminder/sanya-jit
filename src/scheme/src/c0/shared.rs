@@ -1,15 +1,16 @@
+use ast::id::Id;
 use rt::oop::*;
 use rt::*;
 
 use std::collections::HashMap;
 
-pub type GlobalTable = HashMap<String, Handle<Closure>>;
+pub type GlobalTable = HashMap<Id, Handle<Closure>>;
 
 pub type RelocTable = Vec<(usize, Reloc)>;
 
 #[derive(Debug)]
 pub enum Reloc {
-    Global(String),
+    Global(Id),
     Bool(bool),
     Fixnum(i64),
 }
