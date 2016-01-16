@@ -1,6 +1,7 @@
 /// Shared runtime data model and functions.
 
 pub mod oop;
+pub mod oop_utils;
 pub mod gc;
 pub mod inlinesym;
 pub mod stackmap;
@@ -50,9 +51,9 @@ pub struct Universe {
 
 // XXX: Those should be unsafe.
 impl Universe {
-    pub fn new(heap_size: usize) -> Self {
+    pub fn new(heap_size: usize) -> Box<Self> {
         let empty_smt = box Default::default();
-        Universe {
+        let res = box Universe {
             saved_rbp: 0,
             base_rbp: 0,
             saved_rip: 0,
@@ -66,7 +67,11 @@ impl Universe {
             fixnum_info: infotable_for_fixnum(),
             ooparray_info: infotable_for_ooparray(),
             i64array_info: infotable_for_i64array(),
+        };
+        unsafe {
+            res.gc_mut().set_universe(&*res);
         }
+        res
     }
 
     pub unsafe fn gc_mut(&self) -> &mut GcState {

@@ -11,15 +11,17 @@ use std::collections::HashMap;
 /// +----------------------------+------------
 /// | rbp + 8                    | ret addr
 /// | rbp                        | saved rbp
-/// | rbp - 8                    | saved StackMap.as_word
-/// | rbp - (8 + 8 * local_ix)   | local variable slots
+/// | rbp - 8                    | current closure ptr
+/// | rbp - (16 + 8 * local_ix)  | local variable slots
 /// | rsp + N ~ rsp              | local tmps (might contain an alignment slot)
 ///
 /// Stack Map:
 /// A stackmap contains all the local variables and tmps.
 /// rbp - stackmap.len() * 8 points to the saved stackmap.
 
-pub const EXTRA_CALLER_SAVED_FRAME_SLOTS: usize = 0;
+// Number of slots between saved_rbp and local variable slots.
+// Used by c0::codegen to emit local variable slots.
+pub const EXTRA_CALLER_SAVED_FRAME_SLOTS: usize = 1;
 
 // Could also use contain-rs's bit-set crate, but this impl is sufficient now.
 fn bitset_get(bs: &[u8], ix: usize) -> bool {
@@ -36,13 +38,6 @@ fn bitset_set(bs: &mut [u8], ix: usize, value: bool) {
 
 unsafe fn read_word(ptr: usize, offset: isize) -> usize {
     *(((ptr as isize) + offset) as *const usize)
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct StackMap {
-    length: u8,
-    encoding: [u8; 7],
 }
 
 // Maps the rip offsets for return addresses to stackmaps.
@@ -93,6 +88,13 @@ impl<'a> Iterator for StackMapIterator<'a> {
         self.ix += 1;
         Some((ix, self.inner.get_at(ix)))
     }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct StackMap {
+    length: u8,
+    encoding: [u8; 7],
 }
 
 impl StackMap {
@@ -234,7 +236,7 @@ impl<'a> Iterator for FrameOopSlotIterator<'a> {
         loop {
             if let Some((ix, is_gcptr)) = self.inner.next() {
                 if is_gcptr {
-                    let slot = self.frame.rbp - (1 + ix + EXTRA_CALLER_SAVED_FRAME_SLOTS) * 8;
+                    let slot = self.frame.rbp - (1 + ix) * 8;
                     unsafe {
                         return Some(transmute(slot));
                     }

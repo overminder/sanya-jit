@@ -5,6 +5,8 @@ authors = ["Overmind JIANG <p90eri@gmail.com>"]
 
 [dependencies]
 byteorder = "*"
+env_logger = "*"
+log = "*"
 
 [dependencies.assembler]
 path = "../assembler"

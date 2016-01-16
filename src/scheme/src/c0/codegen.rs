@@ -92,13 +92,10 @@ fn compile_function(emit: &mut Emit,
     // println!("Function {}'s offset is {}",
     //         self.scdefn.name(),
     //         labels.get(self.scdefn.name()).unwrap().offset().unwrap());
-    emit_prologue(emit, scdefn.frame_descr().slot_count());
-
+    let stackmap = emit_prologue(emit, scdefn.frame_descr());
     let mut relocs = vec![];
-
-    let stackmap = new_stackmap_with_frame_descr(scdefn.frame_descr());
     {
-        let mut nodecc = NodeCompiler::new(emit, smt, u, &mut relocs);
+        let mut nodecc = NodeCompiler::new(emit, smt, u, &mut relocs, entry_offset);
         nodecc.compile(scdefn.body_mut(), stackmap).unwrap();
     }
 
@@ -121,30 +118,33 @@ fn find_or_make_label<'a>(m: &'a mut LabelMap, name: &str) -> &'a mut Label {
     }
 }
 
-struct NodeCompiler<'a> {
-    emit: &'a mut Emit,
-    universe: &'a Universe,
-    smt: &'a mut StackMapTable,
-    relocs: &'a mut RelocTable,
-}
-
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum CallingConv {
     Internal,
     SyncUniverse,
 }
 
+struct NodeCompiler<'a> {
+    emit: &'a mut Emit,
+    universe: &'a Universe,
+    smt: &'a mut StackMapTable,
+    relocs: &'a mut RelocTable,
+    entry_offset: usize,
+}
+
 impl<'a> NodeCompiler<'a> {
     fn new(emit: &'a mut Emit,
            smt: &'a mut StackMapTable,
            universe: &'a Universe,
-           relocs: &'a mut RelocTable)
+           relocs: &'a mut RelocTable,
+           entry_offset: usize)
            -> Self {
         NodeCompiler {
             emit: emit,
             universe: universe,
             smt: smt,
             relocs: relocs,
+            entry_offset: entry_offset,
         }
     }
 
@@ -155,7 +155,8 @@ impl<'a> NodeCompiler<'a> {
                                         cconv: CallingConv,
                                         mut f: F) {
         // Ensure the stack is 16-byte aligned after the call.
-        let sp_changed = if (stackmap.len() + EXTRA_CALLER_SAVED_FRAME_SLOTS) & 1 == 1 {
+        // Keep this in sync with the actual stack length.
+        let sp_changed = if stackmap.len() & 1 == 1 {
             self.emit.add(RSP, -8);
             stackmap.push_word();
             true
@@ -209,7 +210,7 @@ impl<'a> NodeCompiler<'a> {
     fn load_reloc(&mut self, dst: R64, value: Reloc) {
         self.emit.mov(dst, 0_i64);
         let offset = self.emit.here() - 8;
-        self.relocs.push((offset, value))
+        self.relocs.push((offset - self.entry_offset, value))
     }
 
     fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> Result<(), String> {
@@ -261,17 +262,17 @@ impl<'a> NodeCompiler<'a> {
                 }
                 // Eval func
                 try!(self.compile(func, precall_map));
-                self.emit.mov(RDI, RAX);
+                self.emit.mov(CLOSURE_PTR, RAX);
 
                 for (r, _) in ARG_REGS.iter().zip(args.iter()) {
                     self.emit.pop(*r);
                 }
                 if is_tail {
                     emit_epilogue(self.emit, false);
-                    self.emit.jmp(&Addr::B(RDI));
+                    self.emit.jmp(&Addr::B(CLOSURE_PTR));
                 } else {
                     self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                        emit.call(&Addr::B(RDI));
+                        emit.call(&Addr::B(CLOSURE_PTR));
                     });
                 }
             }
@@ -405,13 +406,12 @@ impl<'a> NodeCompiler<'a> {
                             .sub(RAX, &(TMP + 8));
                     }
                     PrimOpFF::Lt | PrimOpFF::Eq => {
-                        self.emit
-                            .cmp(RAX, &(TMP + 8))
-                            .mov(TMP, 1)
-                            .mov(RAX, 0)
-                            .cmovcc(op_to_cond(op), RAX, TMP);
+                        self.emit.cmp(RAX, &(TMP + 8));
+                        self.load_reloc(TMP, Reloc::Fixnum(1));
+                        self.load_reloc(RAX, Reloc::Fixnum(0));
+                        self.emit.cmovcc(op_to_cond(op), RAX, TMP);
+                        return Ok(());
                     }
-
                 }
                 // Allocate a new fixnum to store the result.
                 self.push_word(RAX, &mut map0);
@@ -539,13 +539,16 @@ fn frame_slot(ix: usize) -> Addr {
     Addr::BD(RBP, -8 * ((1 + EXTRA_CALLER_SAVED_FRAME_SLOTS + ix) as i32))
 }
 
-fn emit_prologue(emit: &mut Emit, frame_slots: usize) {
+fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> StackMap {
     emit.push(RBP)
-        .mov(RBP, RSP);
+        .mov(RBP, RSP)
+        .push(CLOSURE_PTR);
 
+    let frame_slots = frame_descr.slot_count();
     if frame_slots != 0 {
         emit.add(RSP, -8 * (frame_slots as i32));
     }
+    new_stackmap_with_frame_descr(frame_descr)
 }
 
 fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
@@ -559,6 +562,9 @@ fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
 
 fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     let mut m = StackMap::new();
+
+    // For closure ptr
+    m.push_gcptr();
 
     // XXX: Check for gcptr-ness when FrameDescr has got that.
     for _ in 0..frame.slot_count() {
@@ -588,7 +594,7 @@ pub fn make_rust_entry(emit: &mut Emit) -> usize {
         .mov(ALLOC_PTR, &universe_alloc_ptr());
 
     // Enter the real main.
-    emit.call(&Addr::B(RDI));
+    emit.call(&Addr::B(CLOSURE_PTR));
 
     // Sync back the regs to the runtime state.
     emit.mov(&universe_alloc_ptr(), ALLOC_PTR)
@@ -608,6 +614,7 @@ pub fn make_rust_entry(emit: &mut Emit) -> usize {
     entry.offset().unwrap()
 }
 
+const CLOSURE_PTR: R64 = RDI;
 const ARG_REGS: [R64; 5] = [RSI, RDX, RCX, R8, R9];
 
 // Caller saved regs.

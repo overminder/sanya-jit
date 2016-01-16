@@ -1,6 +1,8 @@
 /// Naive semi-space copying GC.
 
+use super::Universe;
 use super::oop::*;
+use super::oop_utils::*;
 use super::stackmap::FrameIterator;
 
 use std::ptr;
@@ -23,6 +25,8 @@ pub struct GcState {
 
     // Used during scavenging.
     copy_ptr: *mut u8,
+
+    universe: *const Universe,
 
     // Statistics.
     pub full_gc_count: usize,
@@ -53,10 +57,19 @@ impl GcState {
             alloc_limit: to_space,
 
             copy_ptr: ptr::null_mut(),
+            universe: ptr::null_mut(),
 
             full_gc_count: 0,
             scavenged_ptr_count: 0,
         }
+    }
+
+    pub fn set_universe(&mut self, u: &Universe) {
+        self.universe = u as *const _;
+    }
+
+    unsafe fn universe(&self) -> &Universe {
+        &*self.universe
     }
 
     unsafe fn copy<'a>(&mut self, oop: &Closure) -> &'a Closure {
@@ -86,9 +99,11 @@ impl GcState {
 
         let copied_to = self.copy(closure);
         self.scavenged_ptr_count += 1;
-        println!("Scavenge: {:x} -> {:x}",
-                 closure as *const _ as usize,
-                 copied_to as *const _ as usize);
+        trace!("  Scavenge: {:?} @{:#x} -> {:?} @{:#x}",
+               FmtOop(closure.as_oop(), self.universe()),
+               closure as *const _ as usize,
+               FmtOop(copied_to.as_oop(), self.universe()),
+               copied_to as *const _ as usize);
         // Tag the old object with a redirection to the copied one.
         *closure.entry_word() = copied_to.as_word() + INFO_SCAVENGED_TAG;
         // And mutate the location.
@@ -158,10 +173,14 @@ impl GcState {
                           alloc_size: usize,
                           handle_block: &HandleBlock,
                           native_frames: Option<FrameIterator>) {
+        trace!("full_gc.");
         self.prepare_collection(handle_block);
         if let Some(native_frames) = native_frames {
             for frame in native_frames {
                 for oop_slot in frame.iter_oop() {
+                    trace!("  iter_oop: *{:#x} -> {:#x}",
+                           oop_slot as *const _ as usize,
+                           *oop_slot);
                     self.scavenge(oop_slot);
                 }
             }
@@ -209,10 +228,10 @@ impl GcState {
         (self.alloc_limit as usize) - (self.alloc_ptr as usize)
     }
 
-    pub fn print_stat(&self) {
-        println!("GcState: full_gc_count = {}, scavenged_ptr_count = {}",
-                 self.full_gc_count,
-                 self.scavenged_ptr_count);
+    pub fn log_stat(&self) {
+        info!("GcState: full_gc_count = {}, scavenged_ptr_count = {}",
+              self.full_gc_count,
+              self.scavenged_ptr_count);
     }
 }
 

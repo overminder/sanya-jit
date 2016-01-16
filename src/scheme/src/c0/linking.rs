@@ -34,21 +34,25 @@ impl LinkedModule {
             let closure = u.new_closure(info);  // Allocates
             global_closures.insert(func_name.to_owned(), closure);
 
-            println!("Closure/{}: [{:#x},{:#x})",
-                     func_name,
-                     start + func.entry_offset,
-                     start + func.end_offset);
+            debug!("Closure/{}: [{:#x},{:#x})",
+                   func_name,
+                   start + func.entry_offset,
+                   start + func.end_offset);
+            let constant_offsets = func.relocs
+                                       .iter()
+                                       .map(|&(ref reloc_offset, _)| *reloc_offset)
+                                       .collect();
 
-            info.set_constant_offsets(func.relocs
-                                          .iter()
-                                          .map(|&(ref reloc_offset, _)| *reloc_offset)
-                                          .collect());
+            debug!("  constant_offsets = {:?}", constant_offsets);
+            info.set_constant_offsets(constant_offsets);
         }
 
         for func in cm.functions.values() {
-            for &(ref reloc_offset, ref reloc) in &func.relocs {
+            let entry_offset = func.entry_offset;
+            for &(reloc_offset, ref reloc) in &func.relocs {
                 let val = reloc.reify(&global_closures, u);  // Allocates
-                NativeEndian::write_u64(&mut jitmem.as_mut()[*reloc_offset..], val as u64);
+                NativeEndian::write_u64(&mut jitmem.as_mut()[entry_offset + reloc_offset..],
+                                        val as u64);
             }
         }
 
@@ -58,6 +62,10 @@ impl LinkedModule {
             main_closure: global_closures["main"].dup(),
             smt: cm.smt,
         }
+    }
+
+    pub fn smt(&self) -> &StackMapTable {
+        &self.smt
     }
 
     pub unsafe fn call_entry(&self, u: &mut Universe) {

@@ -28,5 +28,5 @@
 
 (define main
   (lambda ()
-    (display# (fibo 35))))
+    (display# (fibo 10))))
 

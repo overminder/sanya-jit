@@ -2,6 +2,9 @@
 #![feature(intrinsics)]
 
 extern crate scheme;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 
 use scheme::ast::sexpr::*;
 use scheme::ast::nir::*;
@@ -34,11 +37,11 @@ fn run_file(path: &str) -> io::Result<()> {
 
     lint_scdefns(&mut scdefns).unwrap();
     let linked = c0::link(c0::compile(&mut scdefns, &universe), &universe);
-    // println!("smt = {:?}", universe.smt);
+    // println!("smt = {:?}", linked.smt());
     unsafe {
-        breakpoint();
+        // breakpoint();
         linked.call_entry(&mut universe);
-        universe.gc_mut().print_stat();
+        universe.gc_mut().log_stat();
     }
 
     Ok(())
@@ -66,6 +69,8 @@ fn repl() -> io::Result<()> {
 }
 
 fn main() {
+    env_logger::init().unwrap();
+
     let args: Vec<String> = env::args().collect();
     let args_ref: Vec<&str> = args.iter().skip(1).map(|e| e.as_ref()).collect();
     match args_ref.iter().as_slice() {
