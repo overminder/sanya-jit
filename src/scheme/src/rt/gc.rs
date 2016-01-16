@@ -86,10 +86,9 @@ impl GcState {
 
         let copied_to = self.copy(closure);
         self.scavenged_ptr_count += 1;
-        // println!("Scavenge: {:x} -> {:x}",
-        // closure as *const _ as usize,
-        // copied_to as *const _ as usize);
-        //
+        println!("Scavenge: {:x} -> {:x}",
+                 closure as *const _ as usize,
+                 copied_to as *const _ as usize);
         // Tag the old object with a redirection to the copied one.
         *closure.entry_word() = copied_to.as_word() + INFO_SCAVENGED_TAG;
         // And mutate the location.

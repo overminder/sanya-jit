@@ -1,4 +1,5 @@
 #![feature(slice_patterns)]
+#![feature(intrinsics)]
 
 extern crate scheme;
 
@@ -6,12 +7,16 @@ use scheme::ast::sexpr::*;
 use scheme::ast::nir::*;
 use scheme::ast::sexpr_to_nir::*;
 use scheme::ast::nir_lint::*;
-use scheme::c0::*;
+use scheme::c0;
 use scheme::rt::*;
 
 use std::env;
 use std::fs::File;
 use std::io::{self, stdin, stdout, Read, Write};
+
+extern "rust-intrinsic" {
+    fn breakpoint();
+}
 
 fn run_file(path: &str) -> io::Result<()> {
     let mut src = String::new();
@@ -28,14 +33,13 @@ fn run_file(path: &str) -> io::Result<()> {
     // println!("Compiled scdefns: {:?}", scdefns);
 
     lint_scdefns(&mut scdefns).unwrap();
-    let mut ctx = ModuleContext::new();
-    let rust_entry = ctx.compile(scdefns, &mut universe);
+    let linked = c0::link(c0::compile(&mut scdefns, &universe), &universe);
     // println!("smt = {:?}", universe.smt);
     unsafe {
-        rust_entry(universe.as_ptr());
+        breakpoint();
+        linked.call_entry(&mut universe);
         universe.gc_mut().print_stat();
     }
-
 
     Ok(())
 }

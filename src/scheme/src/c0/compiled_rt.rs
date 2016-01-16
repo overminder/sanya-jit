@@ -3,20 +3,52 @@ use rt::oop::*;
 use rt::inlinesym::InlineSym;
 
 use std::mem::transmute;
+use std::fmt::{self, Debug, Formatter};
+use std::io::Write;
 
-pub unsafe extern "C" fn display_oop(oop: Oop, universe: &Universe) {
-    if universe.oop_is_fixnum(oop) {
+unsafe fn fmt_oop(oop: Oop, u: &Universe, fmt: &mut Formatter) -> fmt::Result {
+    if u.oop_is_fixnum(oop) {
         let i = Fixnum::from_raw(oop);
-        println!("display_oop: Fixnum {}", i.value);
-    } else if universe.oop_is_ooparray(oop) {
+        try!(write!(fmt, "<Fixnum {}>", i.value));
+    } else if u.oop_is_closure(oop) {
+        let clo = Closure::from_raw(oop);
+        try!(write!(fmt, "<Closure {} @{:#x}>", clo.info().name(), oop));
+    } else if u.oop_is_ooparray(oop) {
         let arr = OopArray::from_raw(oop);
-        println!("display_oop: OopArray {}", arr.len());
-        for oop in arr.content() {
-            display_oop(*oop, universe);
+        try!(write!(fmt, "<OopArray ["));
+        for (i, oop) in arr.content().iter().enumerate() {
+            if i != 0 {
+                try!(write!(fmt, ", "));
+            }
+            try!(fmt_oop(*oop, u, fmt));
         }
+        try!(write!(fmt, "]>"));
+    } else if u.oop_is_i64array(oop) {
+        let arr = OopArray::from_raw(oop);
+        try!(write!(fmt, "<I64Array ["));
+        for (i, val) in arr.content().iter().enumerate() {
+            if i != 0 {
+                try!(write!(fmt, ", "));
+            }
+            try!(write!(fmt, "{}", val));
+        }
+        try!(write!(fmt, "]>"));
     } else {
-        panic!("Doesn't know how to display oop: {:#x}", oop);
+        try!(write!(fmt, "<UnknownOop {:#x}>", oop));
     }
+    Ok(())
+}
+
+struct FmtOop<'a>(Oop, &'a Universe);
+
+impl<'a> Debug for FmtOop<'a> {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        unsafe { fmt_oop(self.0, self.1, fmt) }
+    }
+}
+
+pub unsafe extern "C" fn display_oop(oop: Oop, u: &Universe) {
+    println!("{:?}", FmtOop(oop, u));
 }
 
 pub unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {

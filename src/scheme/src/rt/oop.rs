@@ -4,7 +4,6 @@
 use std::boxed::Box;
 use std::slice;
 use std::ptr;
-use std::ffi::CStr;
 use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
 use std::mem::{size_of, transmute, replace};
@@ -31,20 +30,28 @@ impl OopKind {
     pub fn is_array(self) -> bool {
         self == OopKind::OopArray || self == OopKind::I64Array
     }
+
+    pub fn is_closure(self) -> bool {
+        self == OopKind::Callable
+    }
 }
 
 #[repr(C)]
 pub struct InfoTable<A> {
-    ptr_payloads: u16, // GC ptrs
-    word_payloads: u16, // Unmanaged qwords
+    // XXX: Using Option<Box<T>> safely with mem::zeroed relies on that
+    // Rust internally treats None<Box<T>> as nullptr.
+    constant_offsets: Option<Box<[usize]>>,
+    name: Option<Box<String>>,
     arity: u16,
     kind: OopKind,
-    name: *const u8,
-    constant_offsets: *const Vec<usize>,
-    padding: [u8; 8],
+    ptr_payloads: u16, // GC ptrs
+    word_payloads: u16, // Unmanaged qwords
     entry: [u8; 0],
     phantom_data: PhantomData<A>,
 }
+
+pub const INFOTABLE_ARITY_OFFSET: isize = -8;
+pub const INFOTABLE_KIND_OFFSET: isize = -6;
 
 impl<A> Debug for InfoTable<A> {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
@@ -65,16 +72,15 @@ impl<A> InfoTable<A> {
                word_payloads: u16,
                arity: u16,
                kind: OopKind,
-               name: &'static str)
+               name: &str)
                -> Self {
         InfoTable {
             ptr_payloads: ptr_payloads,
             word_payloads: word_payloads,
             arity: arity,
             kind: kind,
-            name: name.as_ptr(),
-            constant_offsets: ptr::null(),
-            padding: [0; 8],
+            name: Some(box name.to_owned()),
+            constant_offsets: Default::default(),
             entry: [],
             phantom_data: PhantomData,
         }
@@ -98,21 +104,24 @@ impl<A> InfoTable<A> {
         self.kind == OopKind::OopArray
     }
 
+    pub fn is_closure(&self) -> bool {
+        self.kind.is_closure()
+    }
+
+    pub fn set_constant_offsets(&mut self, v: Vec<usize>) {
+        self.constant_offsets = Some(v.into_boxed_slice());
+    }
+
     pub unsafe fn constant_offsets(&self) -> Option<&[usize]> {
-        if self.constant_offsets.is_null() {
-            None
-        } else {
-            assert!(self.kind == OopKind::Callable);
-            Some(&*self.constant_offsets)
-        }
+        self.constant_offsets.as_ref().map(|rb| &**rb)
     }
 
-    pub fn name(&self) -> &'static str {
-        unsafe { CStr::from_ptr(self.name as *const _).to_str().unwrap() }
+    pub fn name(&self) -> &str {
+        &*self.name.as_ref().unwrap()
     }
 
-    pub unsafe fn from_entry<'a>(entry: usize) -> &'a Self {
-        &*((entry - size_of::<Self>()) as *const _)
+    pub unsafe fn from_entry<'a>(entry: usize) -> &'a mut Self {
+        &mut *((entry - size_of::<Self>()) as *mut _)
     }
 
     pub fn entry_word(&self) -> usize {
@@ -120,11 +129,7 @@ impl<A> InfoTable<A> {
     }
 }
 
-fn mk_infotable_for_data<A>(nptrs: u16,
-                            nwords: u16,
-                            name: &'static str,
-                            kind: OopKind)
-                            -> InfoTable<A> {
+fn mk_infotable_for_data<A>(nptrs: u16, nwords: u16, name: &str, kind: OopKind) -> InfoTable<A> {
     InfoTable::new(nptrs, nwords, 0, kind, name)
 }
 
@@ -302,7 +307,6 @@ impl HandleBlock {
     }
 }
 
-
 impl<A> RawHandle<A> {
     pub unsafe fn oop(&self) -> &mut Oop {
         &mut *(&self.oop as *const _ as *mut _)
@@ -359,6 +363,10 @@ impl<A> RawHandle<A> {
 
     unsafe fn new_ref(oop_ref: &A, head: &OopHandle) -> Box<Self> {
         RawHandle::new(oop_ref as *const _ as *mut A, head)
+    }
+
+    pub unsafe fn dup(&self) -> Box<Self> {
+        RawHandle::<A>::new(*self.oop() as *mut _, (&*self.as_ptr()))
     }
 }
 

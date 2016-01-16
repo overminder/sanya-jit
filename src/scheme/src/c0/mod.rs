@@ -6,6 +6,7 @@ mod compiled_rt;
 mod shared;
 
 use self::codegen::{ModuleCompiler, CompiledModule};
+use self::linking::LinkedModule;
 use rt::Universe;
 use ast::nir::ScDefn;
 
@@ -15,4 +16,8 @@ pub fn compile(scdefns: &mut [ScDefn], u: &Universe) -> CompiledModule {
         mc.compile_scdefn(scdefn, u);
     }
     mc.into_compiled_module()
+}
+
+pub fn link(cm: CompiledModule, u: &Universe) -> LinkedModule {
+    unsafe { LinkedModule::new(cm, u) }
 }

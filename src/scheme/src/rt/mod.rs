@@ -37,6 +37,7 @@ pub struct Universe {
     // the field offsets (UNIVERSE_OFFSET_OF_*) need to be recalculated
     // after each change.
     pub smt: Option<*const StackMapTable>,
+    empty_smt: Box<StackMapTable>,
 
     handle_block: Box<HandleBlock>,
 
@@ -50,12 +51,14 @@ pub struct Universe {
 // XXX: Those should be unsafe.
 impl Universe {
     pub fn new(heap_size: usize) -> Self {
+        let empty_smt = box Default::default();
         Universe {
             saved_rbp: 0,
             base_rbp: 0,
             saved_rip: 0,
             gc: unsafe { UnsafeCell::new(GcState::new(heap_size)) },
-            smt: None,
+            smt: Some(&*empty_smt as *const _),
+            empty_smt: empty_smt,
 
             handle_block: HandleBlock::new(),
 
@@ -78,6 +81,10 @@ impl Universe {
         }
     }
 
+    pub fn set_smt(&mut self, smt: &StackMapTable) {
+        self.smt = Some(smt as *const _);
+    }
+
     pub fn smt<'a, 'b>(&'a self) -> &'b StackMapTable {
         unsafe { &**self.smt.as_ref().unwrap() }
     }
@@ -96,6 +103,14 @@ impl Universe {
 
     pub fn oop_is_ooparray(&self, oop: Oop) -> bool {
         unsafe { Closure::from_raw(oop).info_is(&self.ooparray_info) }
+    }
+
+    pub fn oop_is_i64array(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info_is(&self.i64array_info) }
+    }
+
+    pub fn oop_is_closure(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info().is_closure() }
     }
 
     pub fn new_pair(&self, car: Oop, cdr: Oop) -> Handle<Pair> {
@@ -120,8 +135,7 @@ impl Universe {
     pub fn new_closure(&self, info: &InfoTable<Closure>) -> Handle<Closure> {
         unsafe {
             let native_frames = self.iter_frame(self.smt());
-            let mut res = self.gc_mut().alloc(&info, &self.handle_block, native_frames);
-            res
+            self.gc_mut().alloc(&info, &self.handle_block, native_frames)
         }
     }
 
@@ -192,10 +206,10 @@ mod tests {
         let mut oops = vec![];
         assert_eq!(u.fixnum_info.sizeof_instance(), 0x10);
 
-        for i in 0..0x10 {
-            oops.push(u.new_fixnum(i));
-        }
         unsafe {
+            for i in 0..0x10 {
+                oops.push(u.new_fixnum(i).dup());
+            }
             assert_eq!(oops.len(), 0x10);
             assert_eq!(u.gc_mut().available_spaces(), 0x100);
 

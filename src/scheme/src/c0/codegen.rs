@@ -21,6 +21,7 @@ pub struct CompiledModule {
 
 pub struct CompiledFunction {
     pub entry_offset: usize,
+    pub end_offset: usize,
     pub relocs: RelocTable,
 }
 
@@ -78,7 +79,7 @@ fn compile_function(emit: &mut Emit,
                                          0,
                                          scdefn.arity() as u16,
                                          OopKind::Callable,
-                                         "toplevel-closure(XXX)");
+                                         scdefn.name());
     unsafe {
         emit.alloc(info);
     }
@@ -97,7 +98,7 @@ fn compile_function(emit: &mut Emit,
 
     let stackmap = new_stackmap_with_frame_descr(scdefn.frame_descr());
     {
-        let mut nodecc = NodeCompiler::new(emit, labels, smt, u, &mut relocs);
+        let mut nodecc = NodeCompiler::new(emit, smt, u, &mut relocs);
         nodecc.compile(scdefn.body_mut(), stackmap).unwrap();
     }
 
@@ -105,6 +106,7 @@ fn compile_function(emit: &mut Emit,
 
     CompiledFunction {
         entry_offset: entry_offset,
+        end_offset: emit.here(),
         relocs: relocs,
     }
 }
@@ -121,7 +123,6 @@ fn find_or_make_label<'a>(m: &'a mut LabelMap, name: &str) -> &'a mut Label {
 
 struct NodeCompiler<'a> {
     emit: &'a mut Emit,
-    labels: &'a mut LabelMap,
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
     relocs: &'a mut RelocTable,
@@ -135,14 +136,12 @@ enum CallingConv {
 
 impl<'a> NodeCompiler<'a> {
     fn new(emit: &'a mut Emit,
-           labels: &'a mut LabelMap,
            smt: &'a mut StackMapTable,
            universe: &'a Universe,
            relocs: &'a mut RelocTable)
            -> Self {
         NodeCompiler {
             emit: emit,
-            labels: labels,
             universe: universe,
             smt: smt,
             relocs: relocs,
@@ -255,21 +254,24 @@ impl<'a> NodeCompiler<'a> {
             }
             &mut NCall { ref mut func, ref mut args, is_tail } => {
                 let mut precall_map = stackmap;
+                // Eval args in the reverse order
                 for arg in args.iter_mut().rev() {
                     try!(self.compile(arg, precall_map));
                     self.push_oop(RAX, &mut precall_map);
                 }
+                // Eval func
                 try!(self.compile(func, precall_map));
+                self.emit.mov(RDI, RAX);
 
-                for (r, _) in [RDI, RSI, RDX, RCX, R8, R9].iter().zip(args.iter()) {
+                for (r, _) in ARG_REGS.iter().zip(args.iter()) {
                     self.emit.pop(*r);
                 }
                 if is_tail {
                     emit_epilogue(self.emit, false);
-                    self.emit.jmp(RAX);
+                    self.emit.jmp(&Addr::B(RDI));
                 } else {
                     self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                        emit.call(RAX);
+                        emit.call(&Addr::B(RDI));
                     });
                 }
             }
@@ -323,7 +325,7 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(last, stackmap));
             }
             &mut NReadArgument(arg_ix) => {
-                self.emit.mov(RAX, [RDI, RSI, RDX, RCX, R8, R9][arg_ix]);
+                self.emit.mov(RAX, ARG_REGS[arg_ix]);
             }
             &mut NReadGlobal(ref mut name) => {
                 self.load_reloc(RAX, Reloc::Global(name.to_owned()));
@@ -566,7 +568,7 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     m
 }
 
-fn make_rust_entry(emit: &mut Emit, main_label: &mut Label) -> usize {
+pub fn make_rust_entry(emit: &mut Emit) -> usize {
     // 1. Build up an entry.
     let mut entry = Label::new();
     emit_nop_until_aligned(emit, 0x10);
@@ -581,12 +583,12 @@ fn make_rust_entry(emit: &mut Emit, main_label: &mut Label) -> usize {
         .push(UNIVERSE_PTR);
 
     // Get the relevant regs from/to the runtime state.
-    emit.mov(UNIVERSE_PTR, RDI)
+    emit.mov(UNIVERSE_PTR, RSI)
         .mov(&universe_base_rbp(), RBP)
         .mov(ALLOC_PTR, &universe_alloc_ptr());
 
     // Enter the real main.
-    emit.call(main_label);
+    emit.call(&Addr::B(RDI));
 
     // Sync back the regs to the runtime state.
     emit.mov(&universe_alloc_ptr(), ALLOC_PTR)
@@ -605,6 +607,8 @@ fn make_rust_entry(emit: &mut Emit, main_label: &mut Label) -> usize {
     // 2. Get it.
     entry.offset().unwrap()
 }
+
+const ARG_REGS: [R64; 5] = [RSI, RDX, RCX, R8, R9];
 
 // Caller saved regs.
 const TMP: R64 = R10;

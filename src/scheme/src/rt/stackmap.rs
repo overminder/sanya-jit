@@ -46,7 +46,7 @@ pub struct StackMap {
 }
 
 // Maps the rip offsets for return addresses to stackmaps.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StackMapTable {
     start: Option<usize>,
     offsets: HashMap<usize, StackMap>,

@@ -34,16 +34,16 @@ impl Emit {
         self.0.len()
     }
 
-    pub unsafe fn alloc<'a, A: Sized>(&mut self, a: A) -> &'a mut A {
+    pub unsafe fn alloc<'a, A: Sized>(&mut self, a: A) {
         let size = size_of::<A>();
-        let here = self.0.as_mut_ptr();
+        let offset = self.here();
         self.0.reserve(size);
         for _ in 0..size {
             self.0.push(0);
         }
-        let res = &mut *(here as *mut _);
+        let base = self.0.as_mut_ptr();
+        let res = &mut *(base.offset(offset as isize) as *mut _);
         replace(res, a);
-        res
     }
 
     pub fn patch_i32(&mut self, ix: usize, value: i32) {
