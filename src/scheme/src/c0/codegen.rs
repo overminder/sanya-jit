@@ -575,7 +575,7 @@ fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize)
         .mov(RBP, RSP)
         .push(CLOSURE_PTR);
 
-    let frame_slots = frame_descr.slot_count();
+    let frame_slots = frame_descr.local_slot_count();
     if frame_slots != 0 {
         emit.add(RSP, -8 * (frame_slots as i32));
     }
@@ -601,7 +601,7 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     m.push_gcptr();
 
     // XXX: Check for gcptr-ness when FrameDescr has got that.
-    for _ in 0..frame.slot_count() {
+    for _ in 0..frame.local_slot_count() {
         m.push_gcptr();
     }
 

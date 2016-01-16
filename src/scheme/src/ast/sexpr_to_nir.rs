@@ -26,21 +26,16 @@ pub fn compile_scdefn(e: &SExpr) -> ScDefn {
                     let read_arg_nodes: NodeList = args.iter()
                                                        .enumerate()
                                                        .map(|(nth_arg, name)| {
-                                                           let local_ix = frame.create_slot(name);
+                                                           let local_ix = frame.create_local_slot(name);
                                                            NWriteLocal(local_ix,
                                                                        box NReadArgument(nth_arg))
                                                        })
                                                        .collect();
-                    let body: NodeList = form[2..form.len() - 1]
-                                             .iter()
-                                             .map(|e| compile_expr(e, &mut frame, false))
-                                             .collect();
-                    let last = box compile_expr(form.last().unwrap(), &mut frame, true);
+                    let body = compile_expr_seq(&form[2..], &mut frame, true);
                     ScDefn::new(name.to_owned(),
                                 args,
                                 frame,
-                                NSeq(read_arg_nodes.into_iter().chain(body.into_iter()).collect(),
-                                     last))
+                                body.prepend_nodes(read_arg_nodes).into_nseq())
                 }
                 _ => panic!("Not a valid ScDefn: {:?}", e),
             }
@@ -54,7 +49,7 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
         &List(ref es) => {
             match es.as_slice() {
                 [Sym(ref tag), Sym(ref name), ref form] if tag == "define" => {
-                    let ix = frame.create_slot(name);
+                    let ix = frame.create_local_slot(name);
                     NWriteLocal(ix, box compile_expr(form, frame, is_tail))
                 }
                 [Sym(ref tag), ref arr, ref ix] if tag == "nth#" => {
@@ -122,12 +117,7 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                     if let &Sym(ref tag) = &es[0] {
                         if tag == "begin" {
                             assert!(es.len() > 1);
-                            let body: Vec<_> = es[1..es.len() - 1]
-                                                   .iter()
-                                                   .map(|e| compile_expr(e, frame, false))
-                                                   .collect();
-                            let last = box compile_expr(es.last().unwrap(), frame, is_tail);
-                            return NSeq(body, last);
+                            return compile_expr_seq(&es[1..], frame, is_tail).into_nseq();
                         } else if tag == "and" {
                             assert!(es.len() == 3);
                             return NIf {
@@ -135,6 +125,10 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
                                 on_true: box compile_expr(&es[2], frame, is_tail),
                                 on_false: box NMkFixnum(0),
                             };
+                        } else if tag == "lambda" {
+                            let args = unwrap_sym_list(&es[1]).unwrap();
+                            let body = compile_expr_seq(&es[2..], frame, false);
+                            return NMkClosure(args, box body.into_nseq());
                         }
                     }
                     let func = compile_expr(&es[0], frame, false);
@@ -146,11 +140,42 @@ pub fn compile_expr(e: &SExpr, frame: &mut FrameDescr, is_tail: bool) -> RawNode
         &Int(ref ival) => NMkFixnum(*ival as isize),
         &Sym(ref name) => {
             match frame.lookup_slot(name) {
-                Some(ix) => NReadLocal(ix),
+                Some(&Slot::Local(ix)) => NReadLocal(ix),
+                Some(&Slot::UpVal(ix)) => NReadUpVal(ix),
                 None => NReadGlobal(name.to_owned()),
             }
         }
     }
+}
+
+struct NSeq0(NodeList, RawNode);
+
+impl NSeq0 {
+    fn prepend_nodes(mut self, mut ns: NodeList) -> Self {
+        ns.extend(self.0.drain(..));
+        self.0 = ns;
+        self
+    }
+
+    fn into_nseq(self) -> RawNode {
+        NSeq(self.0, box self.1)
+    }
+
+    #[allow(unused)]
+    fn into_nodes(mut self) -> NodeList {
+        self.0.push(self.1);
+        self.0
+    }
+}
+
+fn compile_expr_seq(es: &[SExpr], frame: &mut FrameDescr, is_tail: bool) -> NSeq0 {
+    assert!(es.len() >= 1);
+    let body = es[..es.len() - 1]
+        .iter()
+        .map(|e| compile_expr(e, frame, false))
+        .collect();
+    let last = compile_expr(es.last().unwrap(), frame, is_tail);
+    NSeq0(body, last)
 }
 
 fn is_prim_ff_op(s: &str) -> bool {

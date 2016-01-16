@@ -52,37 +52,106 @@ impl ScDefn {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Id {
+    Named(String),
+    Unnamed(usize),
+}
+
+#[derive(Debug)]
+pub enum Slot {
+    Local(usize),
+    UpVal(usize),
+}
+
 #[derive(Debug)]
 pub struct FrameDescr {
-    next_ix: usize,
-    name_to_ix: HashMap<String, usize>,
+    next_local_ix: usize,
+    next_upval_ix: usize,
+    slot_map: SlotMap,
 }
+
+type SlotMap = HashMap<String, Slot>;
 
 impl FrameDescr {
     pub fn new() -> Self {
         FrameDescr {
-            next_ix: 0,
-            name_to_ix: HashMap::new(),
+            next_local_ix: 0,
+            next_upval_ix: 0,
+            slot_map: Default::default(),
         }
     }
 
-    pub fn slot_count(&self) -> usize {
-        self.next_ix
+    pub fn local_slot_count(&self) -> usize {
+        self.next_local_ix
     }
 
-    pub fn lookup_slot(&self, name: &str) -> Option<usize> {
-        self.name_to_ix.get(name).cloned()
+    pub fn lookup_slot(&self, name: &str) -> Option<&Slot> {
+        self.slot_map.get(name)
     }
 
-    pub fn create_slot(&mut self, name: &str) -> usize {
-        if let Some(_) = self.lookup_slot(name) {
-            panic!("Duplicated slot: {}", name);
+    fn create_slot(&mut self, name: &str, slot: Slot) -> &Slot {
+        use std::collections::hash_map::Entry::*;
+
+        match self.slot_map.entry(name.to_owned()) {
+            Occupied(_) => panic!("Duplicated slot: {}", name),
+            Vacant(v) => v.insert(slot),
         }
+    }
 
-        let ix = self.next_ix;
-        self.next_ix += 1;
-        self.name_to_ix.insert(name.to_owned(), ix);
+    pub fn create_local_slot(&mut self, name: &str) -> usize {
+        let ix = self.next_local_ix;
+        self.next_local_ix += 1;
+        self.create_slot(name, Slot::Local(ix));
         ix
+    }
+
+    fn create_upval_slot(&mut self, name: &str) -> &Slot {
+        let ix = self.next_upval_ix;
+        self.next_upval_ix += 1;
+        let res = self.create_slot(name, Slot::UpVal(ix));
+        res
+    }
+}
+
+pub struct FrameDescrChain<'a> {
+    fd: FrameDescr,
+    outer: Option<&'a mut FrameDescrChain<'a>>,
+}
+
+impl<'a> FrameDescrChain<'a> {
+    pub fn new() -> Self {
+        FrameDescrChain {
+            fd: FrameDescr::new(),
+            outer: None,
+        }
+    }
+
+    pub fn new_inner(&'a mut self) -> Self {
+        FrameDescrChain {
+            fd: FrameDescr::new(),
+            outer: Some(self),
+        }
+    }
+
+    // Oops, borrowck bug (rust-lang/rfcs#811)...
+    // Fortunately Edward has a solution here:
+    // http://blog.ezyang.com/2013/12/two-bugs-in-the-borrow-checker-every-rust-developer-should-know-about/
+    pub fn lookup_slot<A, F: FnOnce(Option<&Slot>) -> A>(&mut self, name: &str, f: F) -> A {
+        if let x @ Some(_) = self.fd.lookup_slot(name) {
+            return f(x);
+        }
+
+        match self.outer.as_mut() {
+            Some(outer) => {
+                if outer.lookup_slot(name, |x| x.is_some()) {
+                    return f(Some(self.fd.create_upval_slot(name)));
+                }
+            }
+            _ => (),
+        }
+
+        f(None)
     }
 }
 
@@ -93,6 +162,7 @@ pub enum RawNode {
     NMkPair(Node, Node),
     NMkOopArray(Node /* length */, Node /* fill */),
     NMkI64Array(Node /* length */, Node /* fill */),
+    NMkClosure(Vec<String>, Node),
 
     // Control flows.
     NCall {
@@ -112,6 +182,7 @@ pub enum RawNode {
     NReadGlobal(String),
     // NReadClosure(usize),
     NReadLocal(usize),
+    NReadUpVal(usize),
     NWriteLocal(usize, Node),
 
     NReadOopArray(Node, Node),
