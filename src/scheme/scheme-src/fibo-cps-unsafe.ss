@@ -10,6 +10,6 @@
 
 (define main
   (lambda ()
-    (fibo 40
+    (fibo 20
           (lambda (res)
             (display# res)))))

@@ -26,31 +26,41 @@ pub struct CompiledFunction {
     pub relocs: RelocTable,
 }
 
-pub struct ModuleCompiler {
+pub struct ModuleCompiler<'a> {
     function_labels: LabelMap,
     smt: StackMapTable,
     emit: Emit,
+    scdefns: ScDefns<'a>,
     compiled_functions: HashMap<Id, CompiledFunction>,
 }
 
-impl ModuleCompiler {
+type ScDefns<'a> = HashMap<Id, &'a ScDefn>;
+
+impl<'a> ModuleCompiler<'a> {
     pub fn new() -> Self {
         ModuleCompiler {
             function_labels: HashMap::new(),
             compiled_functions: HashMap::new(),
             smt: StackMapTable::new(),
             emit: Emit::new(),
+            scdefns: Default::default(),
         }
     }
 
-    pub fn compile_scdefn(&mut self, sc: &mut ScDefn, u: &Universe) {
-        let func = compile_function(&mut self.emit,
-                                    sc,
-                                    &mut self.function_labels,
-                                    &mut self.smt,
-                                    u);
+    pub fn add_sc(&mut self, sc: &'a ScDefn) {
+        self.scdefns.insert(sc.name(), sc);
+    }
 
-        self.compiled_functions.insert(sc.name().to_owned(), func);
+    pub fn compile_all(&mut self, u: &Universe) {
+        for sc in self.scdefns.values() {
+            let func = compile_function(&mut self.emit,
+                                        sc,
+                                        &self.scdefns,
+                                        &mut self.function_labels,
+                                        &mut self.smt,
+                                        u);
+            self.compiled_functions.insert(sc.name(), func);
+        }
     }
 
     pub fn into_compiled_module(self) -> CompiledModule {
@@ -65,7 +75,8 @@ impl ModuleCompiler {
 type LabelMap = HashMap<Id, Label>;
 
 fn compile_function(emit: &mut Emit,
-                    scdefn: &mut ScDefn,
+                    scdefn: &ScDefn,
+                    scs: &ScDefns,
                     labels: &mut LabelMap,
                     smt: &mut StackMapTable,
                     u: &Universe)
@@ -76,7 +87,7 @@ fn compile_function(emit: &mut Emit,
     emit_nop_until_aligned(emit, 0x10);
 
     // Make space for infotable.
-    let info = InfoTable::<Closure>::new(0,
+    let info = InfoTable::<Closure>::new(scdefn.frame_descr().upval_refs().len() as u16,
                                          0,
                                          scdefn.arity() as u16,
                                          OopKind::Callable,
@@ -100,10 +111,12 @@ fn compile_function(emit: &mut Emit,
                                            smt,
                                            u,
                                            &mut relocs,
+                                           labels,
                                            entry_offset,
                                            bare_entry,
-                                           scdefn.name().to_owned());
-        nodecc.compile(scdefn.body_mut(), stackmap).unwrap();
+                                           scdefn.name(),
+                                           scs);
+        nodecc.compile(scdefn.body(), stackmap).unwrap();
     }
 
     emit_epilogue(emit, true);
@@ -115,11 +128,10 @@ fn compile_function(emit: &mut Emit,
     }
 }
 
-fn find_or_make_label<'a>(m: &'a mut LabelMap, name: &Id) -> &'a mut Label {
+fn find_or_make_label<'a>(m: &'a mut LabelMap, name: Id) -> &'a mut Label {
     use std::collections::hash_map::Entry::*;
 
-    // XXX: HashMap.entry requires the key to be copied.  Hmm...
-    match m.entry(name.to_owned()) {
+    match m.entry(name) {
         Vacant(v) => v.insert(Label::new()),
         Occupied(o) => o.into_mut(),
     }
@@ -136,9 +148,11 @@ struct NodeCompiler<'a> {
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
     relocs: &'a mut RelocTable,
+    labels: &'a mut LabelMap,
     sc_name: Id,
     entry_offset: usize,
     bare_entry_offset: usize,
+    scs: &'a ScDefns<'a>,
 }
 
 type CgResult<A> = Result<A, String>;
@@ -148,18 +162,22 @@ impl<'a> NodeCompiler<'a> {
            smt: &'a mut StackMapTable,
            universe: &'a Universe,
            relocs: &'a mut RelocTable,
+           labels: &'a mut LabelMap,
            entry_offset: usize,
            bare_entry_offset: usize,
-           sc_name: Id)
+           sc_name: Id,
+           scs: &'a ScDefns<'a>)
            -> Self {
         NodeCompiler {
             emit: emit,
             universe: universe,
             smt: smt,
             relocs: relocs,
+            labels: labels,
             entry_offset: entry_offset,
             bare_entry_offset: bare_entry_offset,
             sc_name: sc_name,
+            scs: scs,
         }
     }
 
@@ -228,16 +246,16 @@ impl<'a> NodeCompiler<'a> {
         self.relocs.push((offset - self.entry_offset, value))
     }
 
-    fn compile(&mut self, node: &mut RawNode, stackmap: StackMap) -> CgResult<()> {
+    fn compile(&mut self, node: &RawNode, stackmap: StackMap) -> CgResult<()> {
         match node {
-            &mut NMkFixnum(i) => {
+            &NMkFixnum(i) => {
                 self.load_reloc(RAX, Reloc::Fixnum(i as i64));
                 // self.emit_fixnum_allocation(stackmap);
                 // self.emit
                 //    .mov(TMP, i as i64)
                 //    .mov(&(RAX + 8), TMP);
             }
-            &mut NMkOopArray(ref mut len, ref mut fill) => {
+            &NMkOopArray(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
                 self.push_oop(RAX, &mut precall_map);
@@ -251,7 +269,7 @@ impl<'a> NodeCompiler<'a> {
                         .call(RAX);
                 });
             }
-            &mut NMkI64Array(ref mut len, ref mut fill) => {
+            &NMkI64Array(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
                 // unbox and push `fill`
@@ -268,10 +286,39 @@ impl<'a> NodeCompiler<'a> {
                         .call(RAX);
                 });
             }
-            &mut NCall { ref mut func, ref mut args, is_tail } => {
+            &NMkClosure(closure_id) => {
+                let sc = self.scs[&closure_id];
+                let mut map0 = stackmap;
+                // Preparing the payloads.
+                for slot in sc.frame_descr().upval_refs().iter().rev() {
+                    match slot {
+                        &Slot::UpVal(ix) => {
+                            self.emit.mov(RAX, &closure_ptr());
+                            self.push_oop(&upval_slot(RAX, ix), &mut map0);
+                        }
+                        &Slot::Local(ix) => {
+                            self.push_oop(&frame_slot(ix), &mut map0);
+                        }
+                    }
+                }
+                // Calling out to alloc the closure.
+                self.emit
+                    .mov(RDI, UNIVERSE_PTR)
+                    .lea(RSI, find_or_make_label(self.labels, closure_id))
+                    .mov(RDX, RSP);
+
+                self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
+                    emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_closure) })
+                        .call(RAX);
+                });
+
+                // Restore the stack ptr.
+                self.emit.add(RSP, (8 * (sc.frame_descr().upval_refs().len())) as i32);
+            }
+            &NCall { ref func, ref args, is_tail } => {
                 let mut precall_map = stackmap;
                 // Eval args in the reverse order
-                for arg in args.iter_mut().rev() {
+                for arg in args.iter().rev() {
                     try!(self.compile(arg, precall_map));
                     self.push_oop(RAX, &mut precall_map);
                 }
@@ -283,7 +330,7 @@ impl<'a> NodeCompiler<'a> {
                     self.emit.pop(*r);
                 }
                 if is_tail {
-                    if let &mut NReadGlobal(ref mut name) = func.as_mut() {
+                    if let &NReadGlobal(ref name) = func.as_ref() {
                         // XXX: Hmm... Is this good?
                         if name == &self.sc_name && OPTIMIZE_KNOWN_SELF_CALL {
                             self.emit.jmp(&mut Label::from_offset(self.bare_entry_offset));
@@ -298,12 +345,12 @@ impl<'a> NodeCompiler<'a> {
                     });
                 }
             }
-            &mut NIf { ref mut cond, ref mut on_true, ref mut on_false } => {
+            &NIf { ref cond, ref on_true, ref on_false } => {
                 let mut label_false = Label::new();
                 let mut label_done = Label::new();
 
                 let special_case = if OPTIMIZE_IF_CMP {
-                    try!(self.emit_optimized_if_cmp(cond.as_mut(), &mut label_false, stackmap))
+                    try!(self.emit_optimized_if_cmp(cond.as_ref(), &mut label_false, stackmap))
                 } else {
                     false
                 };
@@ -325,27 +372,31 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(on_false, stackmap));
                 self.emit.bind(&mut label_done);
             }
-            &mut NSeq(ref mut body, ref mut last) => {
+            &NSeq(ref body, ref last) => {
                 for n in body {
                     try!(self.compile(n, stackmap));
                 }
                 try!(self.compile(last, stackmap));
             }
-            &mut NReadArgument(arg_ix) => {
+            &NReadArgument(arg_ix) => {
                 self.emit.mov(RAX, ARG_REGS[arg_ix]);
             }
-            &mut NReadGlobal(ref mut name) => {
+            &NReadGlobal(ref name) => {
                 self.load_reloc(RAX, Reloc::Global(name.to_owned()));
                 // self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
             }
-            &mut NReadLocal(ix) => {
+            &NReadLocal(ix) => {
                 self.emit.mov(RAX, &frame_slot(ix));
             }
-            &mut NWriteLocal(ix, ref mut n) => {
+            &NWriteLocal(ix, ref n) => {
                 try!(self.compile(n, stackmap));
                 self.emit.mov(&frame_slot(ix), RAX);
             }
-            &mut NReadArrayLength(ref mut arr) => {
+            &NReadUpVal(ix) => {
+                self.emit.mov(RAX, &closure_ptr());
+                self.emit.mov(RAX, &upval_slot(RAX, ix));
+            }
+            &NReadArrayLength(ref arr) => {
                 let mut map0 = stackmap;
                 try!(self.compile(arr, map0));
                 self.emit.mov(RAX, &(RAX + 8));
@@ -355,7 +406,7 @@ impl<'a> NodeCompiler<'a> {
                     .pop(TMP)
                     .mov(&(RAX + 8), TMP);
             }
-            &mut NReadOopArray(ref mut arr, ref mut ix) => {
+            &NReadOopArray(ref arr, ref ix) => {
                 let mut map0 = stackmap;
                 try!(self.compile(ix, map0));
                 self.push_oop(RAX, &mut map0);
@@ -365,7 +416,7 @@ impl<'a> NodeCompiler<'a> {
                     .mov(TMP, &(TMP + 8))
                     .mov(RAX, &(RAX + TMP * 8 + 16));  // array indexing
             }
-            &mut NReadI64Array(ref mut arr, ref mut ix) => {
+            &NReadI64Array(ref arr, ref ix) => {
                 let mut map0 = stackmap;
                 try!(self.compile(ix, map0));
                 self.push_oop(RAX, &mut map0);
@@ -375,7 +426,7 @@ impl<'a> NodeCompiler<'a> {
                     .mov(TMP, &(TMP + 8))
                     .mov(RAX, &(RAX + TMP * 8 + 16));  // array indexing
             }
-            &mut NWriteOopArray(ref mut arr, ref mut ix, ref mut val) => {
+            &NWriteOopArray(ref arr, ref ix, ref val) => {
                 let mut map0 = stackmap;
                 try!(self.compile(val, map0));
                 self.push_oop(RAX, &mut map0);
@@ -389,7 +440,7 @@ impl<'a> NodeCompiler<'a> {
                     .pop(RAX)
                     .mov(&Addr::B(TMP), RAX);
             }
-            &mut NPrimFF(op, ref mut n1, ref mut n2) => {
+            &NPrimFF(op, ref n1, ref n2) => {
                 let mut map0 = stackmap;
                 try!(self.compile(n2, map0));
                 self.push_oop(RAX, &mut map0);
@@ -426,7 +477,7 @@ impl<'a> NodeCompiler<'a> {
                     .pop(TMP)
                     .mov(&(RAX + 8), TMP);
             }
-            &mut NPrimO(ref op, ref mut n1) => {
+            &NPrimO(ref op, ref n1) => {
                 try!(self.compile(n1, stackmap));
                 match *op {
                     PrimOpO::Display => {
@@ -498,12 +549,12 @@ impl<'a> NodeCompiler<'a> {
     // Try to select some better instructions.
     // XXX: Unify jcc and cmovcc generations.
     fn emit_optimized_if_cmp(&mut self,
-                             node: &mut RawNode,
+                             node: &RawNode,
                              label_false: &mut Label,
                              mut map0: StackMap)
                              -> CgResult<bool> {
         Ok(match node {
-            &mut NPrimFF(op, ref mut lhs, ref mut rhs) if op_is_cond(op) => {
+            &NPrimFF(op, ref lhs, ref rhs) if op_is_cond(op) => {
                 try!(self.compile(rhs, map0));
                 self.push_oop(RAX, &mut map0);
                 try!(self.compile(lhs, map0));
@@ -515,7 +566,7 @@ impl<'a> NodeCompiler<'a> {
                     .jcc(op_to_cond(op).inverse(), label_false);
                 true
             }
-            &mut NPrimO(PrimOpO::Fixnump, ref mut rand) => {
+            &NPrimO(PrimOpO::Fixnump, ref rand) => {
                 try!(self.compile(rand, map0));
                 self.emit
                     .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
@@ -569,6 +620,14 @@ fn universe_base_rbp() -> Addr {
 
 fn frame_slot(ix: usize) -> Addr {
     Addr::BD(RBP, -8 * ((1 + EXTRA_CALLER_SAVED_FRAME_SLOTS + ix) as i32))
+}
+
+fn upval_slot(closure_ptr: R64, ix: usize) -> Addr {
+    closure_ptr + (1 + ix as i32) * 8
+}
+
+fn closure_ptr() -> Addr {
+    RBP + (-8)
 }
 
 fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize) {

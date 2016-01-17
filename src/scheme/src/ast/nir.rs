@@ -29,8 +29,8 @@ impl ScDefn {
         }
     }
 
-    pub fn name(&self) -> &Id {
-        &self.name
+    pub fn name(&self) -> Id {
+        self.name
     }
 
     pub fn args(&self) -> &[Id] {
@@ -81,6 +81,10 @@ impl FrameDescr {
             upval_refs: vec![],
             slot_map: Default::default(),
         }
+    }
+
+    pub fn upval_refs(&self) -> &[Slot] {
+        &self.upval_refs
     }
 
     pub fn local_slot_count(&self) -> usize {

@@ -41,3 +41,19 @@ pub unsafe extern "C" fn alloc_ooparray(universe: &mut Universe, len: Oop, fill:
 pub unsafe extern "C" fn alloc_i64array(universe: &mut Universe, len: usize, fill: i64) -> Oop {
     universe.new_i64array(len, fill).as_oop()
 }
+
+pub unsafe extern "C" fn alloc_closure(u: &Universe, info_entry: usize, payloads: *mut Oop) -> Oop {
+    trace!("alloc_closure: payloads = {:#x}", payloads as usize);
+    let info = InfoTable::from_entry(info_entry);
+    let closure = u.new_closure(info);
+    trace!("alloc_closure: Allocated {:?}", FmtOop(closure.as_oop(), u));
+    for (i, upval_slot) in closure.ptr_payloads().iter_mut().enumerate() {
+        let src = payloads.offset(i as isize);
+        trace!("  move payload: from *{:#x} ({:#x})", src as usize, *src);
+        *upval_slot = *src;
+        trace!("  move payload: to *{:#x} ({:?})",
+               upval_slot as *mut _ as usize,
+               FmtOop(*upval_slot, u));
+    }
+    closure.as_oop()
+}
