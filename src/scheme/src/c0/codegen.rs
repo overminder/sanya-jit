@@ -1,4 +1,4 @@
-use super::shared::{Reloc, RelocTable};
+use super::shared::{Reloc, RelocTable, InfoRefs};
 use super::compiled_rt::*;
 use ast::nir::*;
 use ast::id::*;
@@ -24,6 +24,7 @@ pub struct CompiledFunction {
     pub entry_offset: usize,
     pub end_offset: usize,
     pub relocs: RelocTable,
+    pub inforefs: InfoRefs,
 }
 
 pub struct ModuleCompiler<'a> {
@@ -101,21 +102,22 @@ fn compile_function(emit: &mut Emit,
         emit.bind(label);
         label.offset().unwrap()
     };
-    // println!("Function {}'s offset is {}",
-    //         self.scdefn.name(),
-    //         labels.get(self.scdefn.name()).unwrap().offset().unwrap());
     let (stackmap, bare_entry) = emit_prologue(emit, scdefn.frame_descr());
+    let mut inforefs = Default::default();
     let mut relocs = vec![];
     {
-        let mut nodecc = NodeCompiler::new(emit,
-                                           smt,
-                                           u,
-                                           &mut relocs,
-                                           labels,
-                                           entry_offset,
-                                           bare_entry,
-                                           scdefn.name(),
-                                           scs);
+        let mut nodecc = NodeCompiler {
+            emit: emit,
+            universe: u,
+            smt: smt,
+            relocs: &mut relocs,
+            inforefs: &mut inforefs,
+            labels: labels,
+            sc_name: scdefn.name(),
+            entry_offset: entry_offset,
+            bare_entry_offset: bare_entry,
+            scs: scs,
+        };
         nodecc.compile(scdefn.body(), stackmap).unwrap();
     }
 
@@ -125,6 +127,7 @@ fn compile_function(emit: &mut Emit,
         entry_offset: entry_offset,
         end_offset: emit.here(),
         relocs: relocs,
+        inforefs: inforefs,
     }
 }
 
@@ -148,6 +151,7 @@ struct NodeCompiler<'a> {
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
     relocs: &'a mut RelocTable,
+    inforefs: &'a mut InfoRefs,
     labels: &'a mut LabelMap,
     sc_name: Id,
     entry_offset: usize,
@@ -158,29 +162,6 @@ struct NodeCompiler<'a> {
 type CgResult<A> = Result<A, String>;
 
 impl<'a> NodeCompiler<'a> {
-    fn new(emit: &'a mut Emit,
-           smt: &'a mut StackMapTable,
-           universe: &'a Universe,
-           relocs: &'a mut RelocTable,
-           labels: &'a mut LabelMap,
-           entry_offset: usize,
-           bare_entry_offset: usize,
-           sc_name: Id,
-           scs: &'a ScDefns<'a>)
-           -> Self {
-        NodeCompiler {
-            emit: emit,
-            universe: universe,
-            smt: smt,
-            relocs: relocs,
-            labels: labels,
-            entry_offset: entry_offset,
-            bare_entry_offset: bare_entry_offset,
-            sc_name: sc_name,
-            scs: scs,
-        }
-    }
-
     // Might clobber anything except %rax and the arg registers.
     // `f` should really only just do the call.
     fn calling_out<F: FnMut(&mut Emit)>(&mut self,
@@ -242,8 +223,15 @@ impl<'a> NodeCompiler<'a> {
 
     fn load_reloc(&mut self, dst: R64, value: Reloc) {
         self.emit.mov(dst, 0_i64);
-        let offset = self.emit.here() - 8;
-        self.relocs.push((offset - self.entry_offset, value))
+        let offset = self.emit.here() - 8 - self.entry_offset;
+        self.relocs.push((offset, value))
+    }
+
+    fn load_info(&mut self, dst: R64, name: Id) {
+        self.emit.lea(dst, find_or_make_label(self.labels, name));
+        let offset = self.emit.here() - 4 - self.entry_offset;
+        self.inforefs.push(offset);
+        debug!("load_info: {}[{:#x}] -> {}", self.sc_name, offset, name);
     }
 
     fn compile(&mut self, node: &RawNode, stackmap: StackMap) -> CgResult<()> {
@@ -289,6 +277,38 @@ impl<'a> NodeCompiler<'a> {
             &NMkClosure(closure_id) => {
                 let sc = self.scs[&closure_id];
                 let mut map0 = stackmap;
+
+                let npayloads = sc.frame_descr().upval_refs().len();
+
+                if npayloads < 6 && OPTIMIZE_SMALL_MKCLOSURE {
+                    let mut closure_ptr_loaded = false;
+                    // XXX: Keep the size calculation in sync with rt::oop.
+                    self.emit_allocation(stackmap, ((1 + npayloads) * 8) as i32);
+                    self.load_info(TMP, closure_id);
+                    self.emit.mov(&closure_info(RAX), TMP);
+                    for (to_ix, slot) in sc.frame_descr().upval_refs().iter().enumerate() {
+                        match slot {
+                            &Slot::UpVal(from_ix) => {
+                                if !closure_ptr_loaded {
+                                    self.emit.mov(TMP2, &closure_ptr());
+                                    closure_ptr_loaded = true;
+                                }
+                                self.emit.mov(TMP, &upval_slot(TMP2, from_ix));
+                            }
+                            &Slot::Local(from_ix) => {
+                                self.emit.mov(TMP, &frame_slot(from_ix));
+                            }
+                        }
+                        self.emit.mov(&upval_slot(RAX, to_ix), TMP);
+                    }
+
+                    return Ok(());
+                }
+
+                warn!("Closure {} too large ({} payloads).",
+                      self.sc_name,
+                      npayloads);
+
                 // Preparing the payloads.
                 for slot in sc.frame_descr().upval_refs().iter().rev() {
                     match slot {
@@ -301,11 +321,11 @@ impl<'a> NodeCompiler<'a> {
                         }
                     }
                 }
+
                 // Calling out to alloc the closure.
-                self.emit
-                    .mov(RDI, UNIVERSE_PTR)
-                    .lea(RSI, find_or_make_label(self.labels, closure_id))
-                    .mov(RDX, RSP);
+                self.emit.mov(RDI, UNIVERSE_PTR);
+                self.load_info(RSI, closure_id);
+                self.emit.mov(RDX, RSP);
 
                 self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
                     emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_closure) })
@@ -313,7 +333,7 @@ impl<'a> NodeCompiler<'a> {
                 });
 
                 // Restore the stack ptr.
-                self.emit.add(RSP, (8 * (sc.frame_descr().upval_refs().len())) as i32);
+                self.emit.add(RSP, 8 * npayloads as i32);
             }
             &NCall { ref func, ref args, is_tail } => {
                 let mut precall_map = stackmap;
@@ -338,10 +358,10 @@ impl<'a> NodeCompiler<'a> {
                         }
                     }
                     emit_epilogue(self.emit, false);
-                    self.emit.jmp(&Addr::B(CLOSURE_PTR));
+                    self.emit.jmp(&closure_info(CLOSURE_PTR));
                 } else {
                     self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                        emit.call(&Addr::B(CLOSURE_PTR));
+                        emit.call(&closure_info(CLOSURE_PTR));
                     });
                 }
             }
@@ -516,11 +536,8 @@ impl<'a> NodeCompiler<'a> {
         Ok(())
     }
 
-    // XXX: Currently all the allocation routines are inlined. Is this good?
-    fn emit_fixnum_allocation(&mut self, stackmap: StackMap) {
+    fn emit_allocation(&mut self, stackmap: StackMap, alloc_size: i32) {
         let mut label_alloc_success = Label::new();
-        let alloc_size = self.universe.fixnum_info.sizeof_instance() as i32;
-
         // Check heap overflow.
         self.emit
             .mov(RAX, ALLOC_PTR)
@@ -537,11 +554,15 @@ impl<'a> NodeCompiler<'a> {
             emit.mov(RAX, unsafe { transmute::<_, i64>(full_gc) })
                 .call(RAX);
         });
-        // Falls through.
-
         // Fast case: we are done.
+        self.emit.bind(&mut label_alloc_success);
+    }
+
+    // XXX: Currently all the allocation routines are inlined. Is this good?
+    fn emit_fixnum_allocation(&mut self, stackmap: StackMap) {
+        let alloc_size = self.universe.fixnum_info.sizeof_instance() as i32;
+        self.emit_allocation(stackmap, alloc_size);
         self.emit
-            .bind(&mut label_alloc_success)
             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
             .mov(&Addr::B(RAX), TMP);
     }
@@ -630,6 +651,10 @@ fn closure_ptr() -> Addr {
     RBP + (-8)
 }
 
+fn closure_info(r: R64) -> Addr {
+    Addr::B(r)
+}
+
 fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize) {
     emit.push(RBP)
         .mov(RBP, RSP)
@@ -713,6 +738,7 @@ const ARG_REGS: [R64; 5] = [RSI, RDX, RCX, R8, R9];
 
 // Caller saved regs.
 const TMP: R64 = R10;
+const TMP2: R64 = R11;
 
 // Callee saved regs.
 const ALLOC_PTR: R64 = R12;
@@ -720,3 +746,4 @@ const UNIVERSE_PTR: R64 = R13;
 
 const OPTIMIZE_IF_CMP: bool = true;
 const OPTIMIZE_KNOWN_SELF_CALL: bool = true;
+const OPTIMIZE_SMALL_MKCLOSURE: bool = true;

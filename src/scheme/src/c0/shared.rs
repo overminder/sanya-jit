@@ -8,6 +8,8 @@ pub type GlobalTable = HashMap<Id, Handle<Closure>>;
 
 pub type RelocTable = Vec<(usize, Reloc)>;
 
+pub type InfoRefs = Vec<usize>;
+
 #[derive(Debug)]
 pub enum Reloc {
     Global(Id),

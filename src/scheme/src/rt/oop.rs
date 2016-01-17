@@ -1,6 +1,8 @@
 /// Ordinary object pointers and memory layouts.
 /// (I did try to come up with a better name but failed.)
 
+use super::gc::INFO_FRESH_TAG;
+
 use std::boxed::Box;
 use std::slice;
 use std::ptr;
@@ -8,6 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
 use std::mem::{size_of, transmute, replace};
 use std::fmt::{self, Formatter, Debug};
+use std::cell::UnsafeCell;
 
 pub type Oop = usize;
 
@@ -40,8 +43,9 @@ impl OopKind {
 pub struct InfoTable<A> {
     // XXX: Using Option<Box<T>> safely with mem::zeroed relies on that
     // Rust internally treats None<Box<T>> as nullptr.
-    constant_offsets: Option<Box<[usize]>>,
+    gcrefs: Option<Box<[GcRef]>>,
     name: Option<Box<String>>,
+    gc_mark_word: UnsafeCell<usize>,
     arity: u16,
     kind: OopKind,
     ptr_payloads: u16, // GC ptrs
@@ -78,9 +82,10 @@ impl<A> InfoTable<A> {
             ptr_payloads: ptr_payloads,
             word_payloads: word_payloads,
             arity: arity,
+            gc_mark_word: UnsafeCell::new(INFO_FRESH_TAG),
             kind: kind,
             name: Some(box name.to_owned()),
-            constant_offsets: Default::default(),
+            gcrefs: Default::default(),
             entry: [],
             phantom_data: PhantomData,
         }
@@ -108,12 +113,16 @@ impl<A> InfoTable<A> {
         self.kind.is_closure()
     }
 
-    pub fn set_constant_offsets(&mut self, v: Vec<usize>) {
-        self.constant_offsets = Some(v.into_boxed_slice());
+    pub fn set_gcrefs(&mut self, v: Vec<GcRef>) {
+        self.gcrefs = Some(v.into_boxed_slice());
     }
 
-    pub unsafe fn constant_offsets(&self) -> Option<&[usize]> {
-        self.constant_offsets.as_ref().map(|rb| &**rb)
+    pub unsafe fn gcrefs(&self) -> Option<&[GcRef]> {
+        self.gcrefs.as_ref().map(|rb| &**rb)
+    }
+
+    pub fn gc_mark_word(&self) -> &mut usize {
+        unsafe { &mut *self.gc_mark_word.get() }
     }
 
     pub fn name(&self) -> &str {
@@ -149,6 +158,17 @@ pub fn infotable_for_i64array() -> InfoTable<I64Array> {
     mk_infotable_for_data(0, 0, "<I64Array>", OopKind::I64Array)
 }
 
+// Encodes different kinds of Oops that a InfoTable might points to.
+#[derive(Copy, Clone, Debug)]
+pub enum GcRef {
+    // *(entry + u32) contains an Oop.
+    OopConst(u32),
+
+    // *(entry + u32) contains an i32 PC-relative offset to another
+    // InfoTable's entry.
+    PcRelInfoEntry(u32),
+}
+
 /// A Closure is not exactly an ordinary callable object in the narrow sense -
 /// it's a generic heap object, with a info table and some payloads (fields).
 /// Yes, we are using Haskell's nomenclature here.
@@ -166,6 +186,10 @@ impl Closure {
     }
 
     pub unsafe fn info(&self) -> &InfoTable<Self> {
+        InfoTable::<Self>::from_entry(*self.entry_word())
+    }
+
+    pub unsafe fn info_mut(&mut self) -> &mut InfoTable<Self> {
         InfoTable::<Self>::from_entry(*self.entry_word())
     }
 
@@ -193,6 +217,8 @@ impl Closure {
         transmute(self)
     }
 }
+
+pub type ClosureInfo = InfoTable<Closure>;
 
 #[repr(C)]
 pub struct Fixnum {

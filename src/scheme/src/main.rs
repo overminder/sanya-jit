@@ -39,7 +39,7 @@ fn run_file(path: &str) -> io::Result<()> {
     trace!("Compiled scdefns: {:?}", scdefns);
 
     lint_scdefns(&mut scdefns).unwrap();
-    let linked = c0::link(c0::compile(&mut scdefns, &universe), &universe);
+    let mut linked = c0::link(c0::compile(&mut scdefns, &universe), &universe);
     // println!("smt = {:?}", linked.smt());
     unsafe {
         if break_before_main {

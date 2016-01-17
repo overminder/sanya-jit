@@ -8,8 +8,12 @@
                       (lambda (res2)
                         (k (+# res1 res2)))))))))
 
+;; (fibo 37)
+;; Naive closure allocation (one call per alloc): 6.2 seconds
+;; With inline closure allocation: 1.1 seconds
+
 (define main
   (lambda ()
-    (fibo 20
+    (fibo 40
           (lambda (res)
             (display# res)))))

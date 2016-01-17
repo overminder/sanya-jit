@@ -7,7 +7,7 @@ pub mod inlinesym;
 pub mod stackmap;
 
 use self::oop::*;
-use self::gc::GcState;
+use self::gc::{GcState, FullGcArgs};
 use self::stackmap::{FrameIterator, StackMapTable};
 
 use std::cell::UnsafeCell;
@@ -37,7 +37,7 @@ pub struct Universe {
     // ^ The above fields should be changed with caution. Namely,
     // the field offsets (UNIVERSE_OFFSET_OF_*) need to be recalculated
     // after each change.
-    pub smt: Option<*const StackMapTable>,
+    smt: *const StackMapTable,
     empty_smt: Box<StackMapTable>,
 
     handle_block: Box<HandleBlock>,
@@ -47,18 +47,23 @@ pub struct Universe {
     pub fixnum_info: InfoTable<Fixnum>,
     pub ooparray_info: InfoTable<OopArray>,
     pub i64array_info: InfoTable<I64Array>,
+
+    compiled_infos: *mut Vec<*const ClosureInfo>,
+    empty_compiled_infos: Box<Vec<*const ClosureInfo>>,
 }
 
 // XXX: Those should be unsafe.
 impl Universe {
     pub fn new(heap_size: usize) -> Box<Self> {
         let empty_smt = box Default::default();
+        let empty_compiled_infos = box Default::default();
+
         let res = box Universe {
             saved_rbp: 0,
             base_rbp: 0,
             saved_rip: 0,
             gc: unsafe { UnsafeCell::new(GcState::new(heap_size)) },
-            smt: Some(&*empty_smt as *const _),
+            smt: &*empty_smt,
             empty_smt: empty_smt,
 
             handle_block: HandleBlock::new(),
@@ -67,6 +72,9 @@ impl Universe {
             fixnum_info: infotable_for_fixnum(),
             ooparray_info: infotable_for_ooparray(),
             i64array_info: infotable_for_i64array(),
+
+            compiled_infos: &*empty_compiled_infos as *const _ as *mut _,
+            empty_compiled_infos: empty_compiled_infos,
         };
         unsafe {
             res.gc_mut().set_universe(&*res);
@@ -87,11 +95,27 @@ impl Universe {
     }
 
     pub fn set_smt(&mut self, smt: &StackMapTable) {
-        self.smt = Some(smt as *const _);
+        self.smt = smt as *const _;
     }
 
     pub fn smt<'a, 'b>(&'a self) -> &'b StackMapTable {
-        unsafe { &**self.smt.as_ref().unwrap() }
+        unsafe { &*self.smt }
+    }
+
+    pub fn set_compiled_infos(&mut self, infos: &mut Vec<*const ClosureInfo>) {
+        self.compiled_infos = infos as *mut _;
+    }
+
+    pub fn compiled_infos(&self) -> &mut Vec<*const ClosureInfo> {
+        unsafe { &mut *self.compiled_infos }
+    }
+
+    fn gcargs(&self) -> FullGcArgs {
+        FullGcArgs {
+            handle_block: &*self.handle_block,
+            native_frames: self.iter_frame(self.smt()),
+            compiled_infos: Some(self.compiled_infos()),
+        }
     }
 
     pub fn as_ptr(&self) -> *const Self {
@@ -120,8 +144,7 @@ impl Universe {
 
     pub fn new_pair(&self, car: Oop, cdr: Oop) -> Handle<Pair> {
         unsafe {
-            let native_frames = self.iter_frame(self.smt());
-            let mut res = self.gc_mut().alloc(&self.pair_info, &self.handle_block, native_frames);
+            let mut res = self.gc_mut().alloc(&self.pair_info, &mut self.gcargs());
             res.car = car;
             res.cdr = cdr;
             res
@@ -130,27 +153,19 @@ impl Universe {
 
     pub fn new_fixnum(&self, value: isize) -> Handle<Fixnum> {
         unsafe {
-            let native_frames = self.iter_frame(self.smt());
-            let mut res = self.gc_mut().alloc(&self.fixnum_info, &self.handle_block, native_frames);
+            let mut res = self.gc_mut().alloc(&self.fixnum_info, &mut self.gcargs());
             res.value = value;
             res
         }
     }
 
     pub fn new_closure(&self, info: &InfoTable<Closure>) -> Handle<Closure> {
-        unsafe {
-            let native_frames = self.iter_frame(self.smt());
-            self.gc_mut().alloc(&info, &self.handle_block, native_frames)
-        }
+        unsafe { self.gc_mut().alloc(&info, &mut self.gcargs()) }
     }
 
     pub fn new_ooparray<A: IsOop>(&self, len: usize, fill: &Handle<A>) -> Handle<OopArray> {
         unsafe {
-            let native_frames = self.iter_frame(self.smt());
-            let mut res = self.gc_mut().alloc_array(&self.ooparray_info,
-                                                    len,
-                                                    &self.handle_block,
-                                                    native_frames);
+            let mut res = self.gc_mut().alloc_array(&self.ooparray_info, len, &mut self.gcargs());
             res.len = len;
             for ptr in res.content() {
                 *ptr = fill.as_oop();
@@ -161,11 +176,7 @@ impl Universe {
 
     pub fn new_i64array(&self, len: usize, fill: i64) -> Handle<I64Array> {
         unsafe {
-            let native_frames = self.iter_frame(self.smt());
-            let mut res = self.gc_mut().alloc_array(&self.i64array_info,
-                                                    len,
-                                                    &self.handle_block,
-                                                    native_frames);
+            let mut res = self.gc_mut().alloc_array(&self.i64array_info, len, &mut self.gcargs());
             res.len = len;
             for ptr in res.content() {
                 *ptr = fill;
@@ -180,8 +191,7 @@ impl Universe {
 
     pub fn full_gc(&self, alloc_size: usize) -> usize {
         unsafe {
-            let native_frames = self.iter_frame(self.smt());
-            self.gc_mut().full_gc(alloc_size, &self.handle_block, native_frames);
+            self.gc_mut().full_gc(alloc_size, &mut self.gcargs());
             self.gc_mut().unsafe_alloc(alloc_size)
         }
     }
