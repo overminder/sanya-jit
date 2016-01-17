@@ -4,9 +4,9 @@
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::cell::RefCell;
-use std::fmt::{self, Formatter, Display};
+use std::fmt::{self, Formatter, Debug, Display};
 
-#[derive(Debug, Clone, Copy, Eq, Ord, Hash, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Ord, Hash, PartialEq, PartialOrd)]
 pub struct Id(usize);
 
 impl Id {
@@ -20,6 +20,12 @@ impl Id {
 
     pub fn fresh(tag: &str) -> Self {
         get_interner().gensym(tag)
+    }
+}
+
+impl Debug for Id {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        write!(fmt, "{}", self.as_str())
     }
 }
 

@@ -6,6 +6,7 @@
 use self::RawNode::*;
 use super::id::*;
 
+use std::ptr;
 use std::boxed::Box;
 use std::collections::HashMap;
 
@@ -119,44 +120,68 @@ impl FrameDescr {
     }
 }
 
-pub struct FrameDescrChain<'a> {
+pub struct FrameDescrChain {
     fd: FrameDescr,
-    outer: Option<&'a mut FrameDescrChain<'a>>,
+    outer: *mut FrameDescrChain,
 }
 
-impl<'a> FrameDescrChain<'a> {
+impl FrameDescrChain {
     pub fn new() -> Self {
         FrameDescrChain {
             fd: FrameDescr::new(),
-            outer: None,
+            outer: ptr::null_mut(),
         }
     }
 
-    pub fn new_inner(&'a mut self) -> Self {
-        FrameDescrChain {
+    pub fn into_current(self) -> FrameDescr {
+        self.fd
+    }
+
+    pub fn new_inner<A, F: FnMut(&mut Self) -> A>(&mut self, mut f: F) -> (FrameDescr, A) {
+        let mut fdc = FrameDescrChain {
             fd: FrameDescr::new(),
-            outer: Some(self),
+            outer: self as *mut _,
+        };
+        let a = f(&mut fdc);
+        (fdc.into_current(), a)
+    }
+
+    fn outer<'b>(&self) -> Option<&'b mut Self> {
+        if self.outer.is_null() {
+            None
+        } else {
+            Some(unsafe { &mut *self.outer })
         }
+    }
+
+    pub fn create_local_slot(&mut self, name: Id) -> usize {
+        self.fd.create_local_slot(name)
     }
 
     // Oops, borrowck bug (rust-lang/rfcs#811)...
     // Fortunately Edward has a solution here:
     // http://blog.ezyang.com/2013/12/two-bugs-in-the-borrow-checker-every-rust-developer-should-know-about/
-    pub fn lookup_slot<A, F: FnOnce(Option<&Slot>) -> A>(&mut self, name: &Id, f: F) -> A {
-        if let x @ Some(_) = self.fd.lookup_slot(name) {
-            return f(x);
+    pub fn lookup_slot(&mut self, name: &Id) -> Option<&Slot> {
+        if let x @ Some(_) = unsafe { &mut *(self as *mut Self) }.fd.lookup_slot(name) {
+            return x;
         }
 
-        match self.outer.as_mut() {
+        match self.outer() {
             Some(outer) => {
-                if let Some(outer_slot) = outer.lookup_slot(name, |x| x.cloned()) {
-                    return f(Some(self.fd.create_upval_slot(name.to_owned(), outer_slot)));
+                if let Some(outer_slot) = outer.lookup_slot(name) {
+                    return Some(self.fd.create_upval_slot(name.to_owned(), outer_slot.to_owned()));
                 }
             }
             _ => (),
         }
 
-        f(None)
+        None
+    }
+}
+
+impl Default for FrameDescrChain {
+    fn default() -> Self {
+        FrameDescrChain::new()
     }
 }
 
@@ -167,7 +192,7 @@ pub enum RawNode {
     NMkPair(Node, Node),
     NMkOopArray(Node /* length */, Node /* fill */),
     NMkI64Array(Node /* length */, Node /* fill */),
-    NMkClosure(Vec<Id>, Node),
+    NMkClosure(Id),
 
     // Control flows.
     NCall {

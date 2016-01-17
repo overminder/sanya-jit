@@ -35,8 +35,8 @@ fn run_file(path: &str) -> io::Result<()> {
 
     let es = parse_many(&src).unwrap();
     // println!("Parsed sexpr: {:?}", es);
-    let mut scdefns: Vec<ScDefn> = es.iter().map(|e| compile_scdefn(e)).collect();
-    // println!("Compiled scdefns: {:?}", scdefns);
+    let mut scdefns: Vec<ScDefn> = compile_sc(&es);
+    trace!("Compiled scdefns: {:?}", scdefns);
 
     lint_scdefns(&mut scdefns).unwrap();
     let linked = c0::link(c0::compile(&mut scdefns, &universe), &universe);
@@ -65,8 +65,7 @@ fn repl() -> io::Result<()> {
         let es = parse_many(&line).unwrap();
         println!("Parsed sexpr: {:?}", es);
 
-        let mut frame = FrameDescr::new();
-        let node = compile_expr(&es[0], &mut frame, true);
+        let node = compile_expr(&es[0]);
         println!("Compiled node: {:?}", node);
     }
 
