@@ -2,6 +2,7 @@
 #![feature(slice_patterns)]
 #![feature(box_syntax)]
 #![feature(hashmap_hasher)]
+#![feature(drain)]
 
 extern crate assembler;
 extern crate byteorder;
