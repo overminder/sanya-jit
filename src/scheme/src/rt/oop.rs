@@ -3,7 +3,6 @@
 
 use super::gc::INFO_FRESH_TAG;
 
-use std::boxed::Box;
 use std::slice;
 use std::ptr;
 use std::ops::{Deref, DerefMut};
@@ -15,6 +14,16 @@ use std::cell::UnsafeCell;
 pub type Oop = usize;
 
 pub const NULL_OOP: Oop = 0;
+
+// Tagging: currently only booleans are tagged.
+pub const OOP_TAG_SHIFT: u8 = 3;
+pub const OOP_TAG_MASK: usize = (1 << OOP_TAG_SHIFT) - 1;
+
+#[repr(u8)]
+pub enum OopTag {
+    Fixnum = 0x1,
+    Bool = 0x2,
+}
 
 pub fn sizeof_ptrs(nptrs: usize) -> usize {
     nptrs * 8
@@ -231,6 +240,12 @@ pub struct Pair {
     info: *const (),
     pub car: Oop,
     pub cdr: Oop,
+}
+
+#[repr(u8)]
+pub enum Bool {
+    False = 0,
+    True = 1,
 }
 
 // Assumes arrays have the same layout: [info, len, content...]

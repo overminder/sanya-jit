@@ -166,11 +166,8 @@ impl GcState {
         }
     }
 
-    pub unsafe fn prepare_collection(&mut self, handle_block: &HandleBlock) {
+    pub unsafe fn prepare_collection(&mut self) {
         self.copy_ptr = self.to_space;
-
-        // Scavenge managed handles.
-        handle_block.head().foreach_oop(|oop| self.scavenge(oop));
     }
 
     pub unsafe fn finish_collection(&mut self,
@@ -179,13 +176,14 @@ impl GcState {
             let mut i = 0;
             while i < compiled_infos.len() {
                 let shall_remove = {
-                    let info = &compiled_infos[i];
-                    if *(**info).gc_mark_word() == INFO_FRESH_TAG {
-                        trace!("finish_collection: removing {:?}", **info);
+                    let info = &*compiled_infos[i];
+                    let mark_word = info.gc_mark_word();
+                    if *mark_word == INFO_FRESH_TAG {
+                        trace!("finish_collection: removing {:?}", info);
                         true
                     } else {
-                        *(**info).gc_mark_word() = INFO_FRESH_TAG;
-                        trace!("finish_collection: keeping {:?}", **info);
+                        *mark_word = INFO_FRESH_TAG;
+                        trace!("finish_collection: keeping {:?}", *info);
                         false
                     }
                 };
@@ -230,7 +228,12 @@ impl GcState {
 
     pub unsafe fn full_gc(&mut self, alloc_size: usize, args: &mut FullGcArgs) {
         trace!("full_gc.");
-        self.prepare_collection(args.handle_block);
+        self.prepare_collection();
+
+        // Scavenge managed handles.
+        args.handle_block.head().foreach_oop(|oop| self.scavenge(oop));
+
+        // Scavenge native frames.
         if let Some(native_frames) = args.native_frames.as_mut() {
             for frame in native_frames {
                 for oop_slot in frame.iter_oop() {
@@ -299,6 +302,16 @@ pub struct FullGcArgs<'a> {
     pub compiled_infos: Option<&'a mut Vec<*const ClosureInfo>>,
 }
 
+impl<'a> FullGcArgs<'a> {
+    pub fn handle_only(hb: &'a HandleBlock) -> Self {
+        FullGcArgs {
+            handle_block: hb,
+            native_frames: None,
+            compiled_infos: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,11 +326,12 @@ mod tests {
             let fixnum_info = infotable_for_fixnum();
 
             let handle_block = HandleBlock::new();
+            let mut fga = FullGcArgs::handle_only(&handle_block);
 
             // (In-order scavenging).
-            let mut p1 = gc.alloc(&pair_info, &handle_block, None);
-            let mut i1 = gc.alloc(&fixnum_info, &handle_block, None);
-            let mut i2 = gc.alloc(&fixnum_info, &handle_block, None);
+            let mut p1 = gc.alloc(&pair_info, &mut fga);
+            let mut i1 = gc.alloc(&fixnum_info, &mut fga);
+            let mut i2 = gc.alloc(&fixnum_info, &mut fga);
 
             i1.value = 999;
             i2.value = 888;
@@ -327,8 +341,7 @@ mod tests {
             let i1_loc = *i1.oop();
             let i2_loc = *i2.oop();
             let p1_loc = *p1.oop();
-            gc.prepare_collection(&handle_block);
-            gc.finish_collection(&[]);
+            gc.full_gc(0, &mut fga);
             assert_eq!(*i1.oop() - i1_loc, heap_size);
             assert_eq!(*i2.oop() - i2_loc, heap_size);
             assert_eq!(*p1.oop() - p1_loc, heap_size);

@@ -547,7 +547,7 @@ impl<'a> NodeCompiler<'a> {
 
         // Slow case: sync the runtime state and call out for GC.
         self.emit
-            .sub(ALLOC_PTR, alloc_size)
+            .mov(ALLOC_PTR, RAX)
             .mov(RDI, UNIVERSE_PTR)
             .mov(RSI, alloc_size as i64);
         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
