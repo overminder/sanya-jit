@@ -1,9 +1,10 @@
 /// Naive semi-space copying GC.
 
-use super::Universe;
-use super::oop::*;
-use super::oop_utils::*;
-use super::stackmap::FrameIterator;
+use super::{INFO_MARKED_TAG, INFO_FRESH_TAG};
+use rt::Universe;
+use rt::oop::*;
+use rt::oop_utils::*;
+use rt::stackmap::FrameIterator;
 
 use std::ptr;
 use std::mem::{swap, transmute};
@@ -11,9 +12,6 @@ use std::mem::{swap, transmute};
 pub const OOP_INFO_TAG_MASK: usize = 0x7;
 pub const OOP_INFO_UNTAG_MASK: usize = !OOP_INFO_TAG_MASK;
 pub const OOP_INFO_SCAVENGED_TAG: usize = 1;
-
-pub const INFO_FRESH_TAG: usize = 0;
-pub const INFO_MARKED_TAG: usize = 1;
 
 #[repr(C)]
 pub struct GcState {
@@ -29,6 +27,8 @@ pub struct GcState {
     // Used during scavenging.
     copy_ptr: *mut u8,
 
+    // Just used for debugging. FullGcArgs are expected to be passed by
+    // the calling universe.
     universe: *const Universe,
 
     // Statistics.
@@ -166,11 +166,11 @@ impl GcState {
         }
     }
 
-    pub unsafe fn prepare_collection(&mut self) {
+    unsafe fn prepare_collection(&mut self) {
         self.copy_ptr = self.to_space;
     }
 
-    pub unsafe fn finish_collection(&mut self,
+    unsafe fn finish_collection(&mut self,
                                     compiled_infos: &mut Option<&mut Vec<*const ClosureInfo>>) {
         if let &mut Some(ref mut compiled_infos) = compiled_infos {
             let mut i = 0;

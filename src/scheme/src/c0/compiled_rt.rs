@@ -11,7 +11,7 @@ pub unsafe extern "C" fn display_oop(oop: Oop, u: &Universe) {
 
 pub unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {
     // Unwind the stack.
-    let reason = InlineSym::from_word(f.value as usize);
+    let reason = InlineSym::from_word(f.value() as usize);
     println!("Panic (cause = {}), Unwinding the stack.", reason.as_str());
     for (frame_no, frame) in universe.iter_frame(universe.smt()).unwrap().enumerate() {
         println!("Frame {}: {:?}", frame_no, frame);
@@ -35,7 +35,7 @@ pub unsafe extern "C" fn alloc_ooparray(universe: &mut Universe, len: Oop, fill:
     assert!(universe.oop_is_fixnum(len));
     let len: Handle<Fixnum> = universe.oop_handle(len);
     let fill: Handle<Closure> = universe.oop_handle(fill);
-    universe.new_ooparray(len.value as usize, &fill).as_oop()
+    universe.new_ooparray(len.value() as usize, &fill).as_oop()
 }
 
 pub unsafe extern "C" fn alloc_i64array(universe: &mut Universe, len: usize, fill: i64) -> Oop {

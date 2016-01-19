@@ -8,7 +8,7 @@ use std::fmt::{self, Formatter, Debug};
 unsafe fn fmt_oop(oop: Oop, u: &Universe, fmt: &mut Formatter) -> fmt::Result {
     if u.oop_is_fixnum(oop) {
         let i = Fixnum::from_raw(oop);
-        try!(write!(fmt, "<Fixnum {}>", i.value));
+        try!(write!(fmt, "<Fixnum {}>", i.value()));
     } else if u.oop_is_closure(oop) {
         let clo = Closure::from_raw(oop);
         try!(write!(fmt, "<Closure {} @{:#x}>", clo.info().name(), oop));

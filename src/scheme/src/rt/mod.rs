@@ -154,7 +154,7 @@ impl Universe {
     pub fn new_fixnum(&self, value: isize) -> Handle<Fixnum> {
         unsafe {
             let mut res = self.gc_mut().alloc(&self.fixnum_info, &mut self.gcargs());
-            res.value = value;
+            res.set_value(value);
             res
         }
     }

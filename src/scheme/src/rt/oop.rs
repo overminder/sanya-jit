@@ -232,7 +232,17 @@ pub type ClosureInfo = InfoTable<Closure>;
 #[repr(C)]
 pub struct Fixnum {
     info: *const (),
-    pub value: isize,
+    value: isize,
+}
+
+impl Fixnum {
+    pub fn set_value(&mut self, v: isize) {
+        self.value = v
+    }
+
+    pub fn value(&self) -> isize {
+        self.value
+    }
 }
 
 #[repr(C)]
@@ -246,6 +256,20 @@ pub struct Pair {
 pub enum Bool {
     False = 0,
     True = 1,
+}
+
+impl Bool {
+    pub fn as_oop(self) -> Oop {
+        ((self as usize) << OOP_TAG_SHIFT) + (OopTag::Bool as usize)
+    }
+
+    pub fn from_oop(oop: Oop) -> Self {
+        match oop >> OOP_TAG_SHIFT {
+            0 => Bool::False,
+            1 => Bool::True,
+            _ => panic!("Not a bool: {:#x}", oop),
+        }
+    }
 }
 
 // Assumes arrays have the same layout: [info, len, content...]
