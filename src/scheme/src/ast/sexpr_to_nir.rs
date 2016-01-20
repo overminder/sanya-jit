@@ -184,11 +184,8 @@ impl Context {
             &Int(ref ival) => NMkFixnum(*ival as isize),
             &Sym(ref name) => {
                 let name = Id::named(name);
-                match fdc.lookup_slot(&name) {
-                    Some(&Slot::Local(ix)) => NReadLocal(ix),
-                    Some(&Slot::UpVal(ix)) => NReadUpVal(ix),
-                    None => NReadGlobal(name),
-                }
+                let slot = fdc.lookup_slot(&name).cloned().unwrap_or_else(|| Slot::Global(name));
+                NReadSlot(slot)
             }
         }
     }

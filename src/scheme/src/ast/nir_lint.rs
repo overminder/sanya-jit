@@ -22,7 +22,7 @@ struct CheckGlobal<'a>(&'a HashSet<Id>);
 impl<'a> NodeTraverser<String> for CheckGlobal<'a> {
     fn before(&mut self, node: &mut RawNode) -> Result<TraversalDirection, String> {
         match node {
-            &mut NReadGlobal(ref mut g) => {
+            &mut NReadSlot(Slot::Global(ref g)) => {
                 if !self.0.contains(g) {
                     return Err(format!("No global name `{:?}` found", g));
                 }

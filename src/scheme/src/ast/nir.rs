@@ -58,6 +58,7 @@ impl ScDefn {
 pub enum Slot {
     Local(usize),
     UpVal(usize),
+    Global(Id),
 }
 
 #[derive(Debug)]
@@ -213,10 +214,8 @@ pub enum RawNode {
 
     // Storage manipulations.
     NReadArgument(usize),
-    NReadGlobal(Id),
+    NReadSlot(Slot),
     // NReadClosure(usize),
-    NReadLocal(usize),
-    NReadUpVal(usize),
     NWriteLocal(usize, Node),
 
     NReadOopArray(Node, Node),
@@ -314,7 +313,10 @@ impl RawNode {
                         }
                         try!(n.traverse(t));
                     }
-                    _ => {}
+                    &mut NMkFixnum(..) |
+                    &mut NMkClosure(..) |
+                    &mut NReadArgument(..) |
+                    &mut NReadSlot(..) => {}
                 }
             }
             Skip => {}

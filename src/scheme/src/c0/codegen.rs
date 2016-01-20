@@ -298,6 +298,7 @@ impl<'a> NodeCompiler<'a> {
                             &Slot::Local(from_ix) => {
                                 self.emit.mov(TMP, &frame_slot(from_ix));
                             }
+                            _ => panic!("NMkClosure: upval_refs contain {:?}", slot),
                         }
                         self.emit.mov(&upval_slot(RAX, to_ix), TMP);
                     }
@@ -319,6 +320,7 @@ impl<'a> NodeCompiler<'a> {
                         &Slot::Local(ix) => {
                             self.push_oop(&frame_slot(ix), &mut map0);
                         }
+                        _ => panic!("NMkClosure: upval_refs contain {:?}", slot),
                     }
                 }
 
@@ -350,9 +352,9 @@ impl<'a> NodeCompiler<'a> {
                     self.emit.pop(*r);
                 }
                 if is_tail {
-                    if let &NReadGlobal(ref name) = func.as_ref() {
+                    if let &NReadSlot(Slot::Global(name)) = func.as_ref() {
                         // XXX: Hmm... Is this good?
-                        if name == &self.sc_name && OPTIMIZE_KNOWN_SELF_CALL {
+                        if name == self.sc_name && OPTIMIZE_KNOWN_SELF_CALL {
                             self.emit.jmp(&mut Label::from_offset(self.bare_entry_offset));
                             return Ok(());
                         }
@@ -401,20 +403,20 @@ impl<'a> NodeCompiler<'a> {
             &NReadArgument(arg_ix) => {
                 self.emit.mov(RAX, ARG_REGS[arg_ix]);
             }
-            &NReadGlobal(ref name) => {
+            &NReadSlot(Slot::Global(name)) => {
                 self.load_reloc(RAX, Reloc::Global(name.to_owned()));
                 // self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
             }
-            &NReadLocal(ix) => {
+            &NReadSlot(Slot::Local(ix)) => {
                 self.emit.mov(RAX, &frame_slot(ix));
+            }
+            &NReadSlot(Slot::UpVal(ix)) => {
+                self.emit.mov(RAX, &closure_ptr());
+                self.emit.mov(RAX, &upval_slot(RAX, ix));
             }
             &NWriteLocal(ix, ref n) => {
                 try!(self.compile(n, stackmap));
                 self.emit.mov(&frame_slot(ix), RAX);
-            }
-            &NReadUpVal(ix) => {
-                self.emit.mov(RAX, &closure_ptr());
-                self.emit.mov(RAX, &upval_slot(RAX, ix));
             }
             &NReadArrayLength(ref arr) => {
                 let mut map0 = stackmap;
