@@ -127,6 +127,16 @@ impl Context {
                         NPrimO(PrimOpO::PanicInlineSym,
                                box NMkFixnum(InlineSym::from_str(&val).unwrap().as_word() as isize))
                     }
+                    [Sym(ref tag), ref val] if tag == "mk-box#" => {
+                        NMkBox(box self.compile_expr(val, fdc, false))
+                    }
+                    [Sym(ref tag), ref loc] if tag == "unwrap-box#" => {
+                        NReadBox(box self.compile_expr(loc, fdc, false))
+                    }
+                    [Sym(ref tag), ref loc, ref val] if tag == "set-box!#" => {
+                        NWriteBox(box self.compile_expr(loc, fdc, false),
+                                  box self.compile_expr(val, fdc, false))
+                    }
                     [Sym(ref tag), ref e1, ref e2] if is_prim_ff_op(tag) => {
                         let n1 = self.compile_expr(e1, fdc, false);
                         let n2 = self.compile_expr(e2, fdc, false);

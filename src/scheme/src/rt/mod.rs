@@ -47,6 +47,7 @@ pub struct Universe {
     pub fixnum_info: InfoTable<Fixnum>,
     pub ooparray_info: InfoTable<OopArray>,
     pub i64array_info: InfoTable<I64Array>,
+    pub box_info: InfoTable<MutBox>,
 
     compiled_infos: *mut Vec<*const ClosureInfo>,
     empty_compiled_infos: Box<Vec<*const ClosureInfo>>,
@@ -72,6 +73,7 @@ impl Universe {
             fixnum_info: infotable_for_fixnum(),
             ooparray_info: infotable_for_ooparray(),
             i64array_info: infotable_for_i64array(),
+            box_info: infotable_for_box(),
 
             compiled_infos: &*empty_compiled_infos as *const _ as *mut _,
             empty_compiled_infos: empty_compiled_infos,

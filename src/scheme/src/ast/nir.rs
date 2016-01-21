@@ -195,6 +195,7 @@ pub enum RawNode {
     // Allocations.
     NMkFixnum(isize),
     NMkPair(Node, Node),
+    NMkBox(Node),
     NMkOopArray(Node /* length */, Node /* fill */),
     NMkI64Array(Node /* length */, Node /* fill */),
     NMkClosure(Id),
@@ -226,6 +227,9 @@ pub enum RawNode {
 
     // Generic
     NReadArrayLength(Node),
+
+    NReadBox(Node),
+    NWriteBox(Node, Node),
 
     // PrimOps.
     NPrimFF(PrimOpFF, Node, Node), // Fixnum binary ops.
@@ -275,10 +279,13 @@ impl RawNode {
                 match self {
                     &mut NWriteLocal(_, ref mut n) |
                     &mut NReadArrayLength(ref mut n) |
+                    &mut NMkBox(ref mut n) |
+                    &mut NReadBox(ref mut n) |
                     &mut NPrimO(_, ref mut n) => {
                         try!(n.traverse(t));
                     }
 
+                    &mut NWriteBox(ref mut n1, ref mut n2) |
                     &mut NMkPair(ref mut n1, ref mut n2) |
                     &mut NMkOopArray(ref mut n1, ref mut n2) |
                     &mut NMkI64Array(ref mut n1, ref mut n2) |

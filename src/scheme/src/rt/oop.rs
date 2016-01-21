@@ -155,6 +155,10 @@ pub fn infotable_for_pair() -> InfoTable<Pair> {
     mk_infotable_for_data(2, 0, "<Pair>", OopKind::Plain)
 }
 
+pub fn infotable_for_box() -> InfoTable<MutBox> {
+    mk_infotable_for_data(1, 0, "<Box>", OopKind::Plain)
+}
+
 pub fn infotable_for_fixnum() -> InfoTable<Fixnum> {
     mk_infotable_for_data(0, 1, "<Fixnum>", OopKind::Plain)
 }
@@ -250,6 +254,22 @@ pub struct Pair {
     info: *const (),
     pub car: Oop,
     pub cdr: Oop,
+}
+
+#[repr(C)]
+pub struct MutBox {
+    info: *const (),
+    value: Oop,
+}
+
+impl MutBox {
+    pub fn set_value(&mut self, v: Oop) {
+        self.value = v
+    }
+
+    pub fn value(&self) -> Oop {
+        self.value
+    }
 }
 
 #[repr(u8)]

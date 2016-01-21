@@ -283,7 +283,7 @@ impl<'a> NodeCompiler<'a> {
                 if npayloads < 6 && OPTIMIZE_SMALL_MKCLOSURE {
                     let mut closure_ptr_loaded = false;
                     // XXX: Keep the size calculation in sync with rt::oop.
-                    self.emit_allocation(stackmap, ((1 + npayloads) * 8) as i32);
+                    self.emit_allocation(stackmap, ((1 + npayloads) * 8) as i32, &[]);
                     self.load_info(TMP, closure_id);
                     self.emit.mov(&closure_info(RAX), TMP);
                     for (to_ix, slot) in sc.frame_descr().upval_refs().iter().enumerate() {
@@ -336,6 +336,12 @@ impl<'a> NodeCompiler<'a> {
 
                 // Restore the stack ptr.
                 self.emit.add(RSP, 8 * npayloads as i32);
+            }
+            &NMkBox(ref n) => {
+                panic!();
+                //let mut map0 = stackmap;
+                //try!(self.compile(n, stackmap));
+                //self.emit.push(RAX);
             }
             &NCall { ref func, ref args, is_tail } => {
                 let mut precall_map = stackmap;
@@ -421,12 +427,8 @@ impl<'a> NodeCompiler<'a> {
             &NReadArrayLength(ref arr) => {
                 let mut map0 = stackmap;
                 try!(self.compile(arr, map0));
-                self.emit.mov(RAX, &(RAX + 8));
-                self.push_word(RAX, &mut map0);
-                self.emit_fixnum_allocation(map0);
-                self.emit
-                    .pop(TMP)
-                    .mov(&(RAX + 8), TMP);
+                self.emit.mov(TMP, &(RAX + 8));
+                self.emit_fixnum_allocation(map0, TMP);
             }
             &NReadOopArray(ref arr, ref ix) => {
                 let mut map0 = stackmap;
@@ -468,7 +470,7 @@ impl<'a> NodeCompiler<'a> {
                 self.push_oop(RAX, &mut map0);
                 try!(self.compile(n1, map0));
 
-                // Unbox the lhs and pop the rhs.
+                // Unbox the lhs to RAX and pop the rhs to TMP.
                 self.emit
                     .mov(RAX, &(RAX + 8))
                     .pop(TMP);
@@ -493,11 +495,8 @@ impl<'a> NodeCompiler<'a> {
                     }
                 }
                 // Allocate a new fixnum to store the result.
-                self.push_word(RAX, &mut map0);
-                self.emit_fixnum_allocation(map0);
-                self.emit
-                    .pop(TMP)
-                    .mov(&(RAX + 8), TMP);
+                self.emit.mov(TMP, RAX);
+                self.emit_fixnum_allocation(map0, TMP);
             }
             &NPrimO(ref op, ref n1) => {
                 try!(self.compile(n1, stackmap));
@@ -538,7 +537,8 @@ impl<'a> NodeCompiler<'a> {
         Ok(())
     }
 
-    fn emit_allocation(&mut self, stackmap: StackMap, alloc_size: i32) {
+    // To RAX.
+    fn emit_allocation(&mut self, stackmap: StackMap, alloc_size: i32, tmp_regs: &[(bool, R64)]) {
         let mut label_alloc_success = Label::new();
         // Check heap overflow.
         self.emit
@@ -547,24 +547,44 @@ impl<'a> NodeCompiler<'a> {
             .cmp(ALLOC_PTR, &universe_alloc_limit())
             .jle(&mut label_alloc_success);
 
+        let mut map0 = stackmap;
+        for &(is_oop, r) in tmp_regs {
+            // Save regs.
+            if is_oop {
+                self.push_oop(r, &mut map0);
+            } else {
+                self.push_word(r, &mut map0);
+            }
+        }
         // Slow case: sync the runtime state and call out for GC.
         self.emit
             .mov(ALLOC_PTR, RAX)
             .mov(RDI, UNIVERSE_PTR)
             .mov(RSI, alloc_size as i64);
-        self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+        self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
             emit.mov(RAX, unsafe { transmute::<_, i64>(full_gc) })
                 .call(RAX);
         });
+        for &(_, r) in tmp_regs.iter().rev() {
+            // Restore regs.
+            self.emit.pop(r);
+        }
         // Fast case: we are done.
         self.emit.bind(&mut label_alloc_success);
     }
 
     // XXX: Currently all the allocation routines are inlined. Is this good?
-    fn emit_fixnum_allocation(&mut self, stackmap: StackMap) {
+    fn emit_fixnum_allocation(&mut self, mut stackmap: StackMap, value_reg: R64) {
         let alloc_size = self.universe.fixnum_info.sizeof_instance() as i32;
-        self.emit_allocation(stackmap, alloc_size);
+        if OPTIMIZE_FIXNUM_ALLOC_FAST_PATH {
+            self.emit_allocation(stackmap, alloc_size, &[(false, value_reg)]);
+        } else {
+            self.push_word(value_reg, &mut stackmap);
+            self.emit_allocation(stackmap, alloc_size, &[]);
+            self.emit.pop(value_reg);
+        }
         self.emit
+            .mov(&(RAX + 8), value_reg)
             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
             .mov(&Addr::B(RAX), TMP);
     }
@@ -749,3 +769,4 @@ const UNIVERSE_PTR: R64 = R13;
 const OPTIMIZE_IF_CMP: bool = true;
 const OPTIMIZE_KNOWN_SELF_CALL: bool = true;
 const OPTIMIZE_SMALL_MKCLOSURE: bool = true;
+const OPTIMIZE_FIXNUM_ALLOC_FAST_PATH: bool = true;
