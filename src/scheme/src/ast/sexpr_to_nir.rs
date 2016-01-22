@@ -84,8 +84,10 @@ impl Context {
             &List(ref es) => {
                 match es.as_slice() {
                     [Sym(ref tag), Sym(ref name), ref form] if tag == "define" => {
+                        // Define is not recursive.
+                        let form = box self.compile_expr(form, fdc, tail);
                         let ix = fdc.create_local_slot(Id::named(name));
-                        NWriteLocal(ix, box self.compile_expr(form, fdc, tail))
+                        NWriteLocal(ix, form)
                     }
                     [Sym(ref tag), ref arr, ref ix] if tag == "nth#" => {
                         NReadOopArray(box self.compile_expr(arr, fdc, false),
@@ -180,6 +182,9 @@ impl Context {
                                 let name = lam.name();
                                 self.add_sc(lam.into_sc(frame));
                                 return NMkClosure(name);
+                            } else if tag == "letrec" {
+                                let bindings = &es[1];
+                                let body = &es[2];
                             }
                         }
                         let func = self.compile_expr(&es[0], fdc, false);

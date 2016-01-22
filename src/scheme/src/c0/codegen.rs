@@ -338,10 +338,28 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.add(RSP, 8 * npayloads as i32);
             }
             &NMkBox(ref n) => {
-                panic!();
-                //let mut map0 = stackmap;
-                //try!(self.compile(n, stackmap));
-                //self.emit.push(RAX);
+                try!(self.compile(n, stackmap));
+                self.emit.mov(TMP, RAX);
+                self.emit_allocation(stackmap,
+                                     self.universe.box_info.sizeof_instance() as i32,
+                                     &[(true, TMP)]);
+                self.emit
+                    .mov(&(RAX + 8), TMP)
+                    .mov(TMP, self.universe.box_info.entry_word() as i64)
+                    .mov(&closure_info(RAX), TMP);
+            }
+            &NReadBox(ref n) => {
+                try!(self.compile(n, stackmap));
+                self.emit.mov(RAX, &(RAX + 8));
+            }
+            &NWriteBox(ref n, ref v) => {
+                let mut map0 = stackmap;
+                try!(self.compile(v, map0));
+                self.push_oop(RAX, &mut map0);
+                try!(self.compile(n, map0));
+                self.emit
+                    .pop(TMP)
+                    .mov(&(RAX + 8), TMP);
             }
             &NCall { ref func, ref args, is_tail } => {
                 let mut precall_map = stackmap;
