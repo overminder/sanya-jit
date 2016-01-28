@@ -119,6 +119,10 @@ impl Context {
                         NMkI64Array(box self.compile_expr(len, fdc, false),
                                     box self.compile_expr(fill, fdc, false))
                     }
+                    [Sym(ref tag), ref car, ref cdr] if tag == "cons#" => {
+                        NMkPair(box self.compile_expr(car, fdc, false),
+                                box self.compile_expr(cdr, fdc, false))
+                    }
                     [Sym(ref tag), ref e1] if tag == "display#" => {
                         NPrimO(PrimOpO::Display, box self.compile_expr(e1, fdc, false))
                     }

@@ -10,7 +10,7 @@ pub struct GcState {
 impl GcState {
     pub unsafe fn new(major_size: usize) -> Self {
         GcState {
-            minor: Space::new(30000),  // 64 KB L1 d-cache
+            minor: Space::new(30000), // 64 KB L1 d-cache
             major: Space::new(major_size),
         }
     }

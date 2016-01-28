@@ -243,6 +243,22 @@ impl<'a> NodeCompiler<'a> {
                 //    .mov(TMP, i as i64)
                 //    .mov(&(RAX + 8), TMP);
             }
+            &NMkPair(ref car, ref cdr) => {
+                let mut map0 = stackmap;
+                self.compile(cdr, map0);
+                self.push_oop(RAX, &mut map0);
+                self.compile(car, map0);
+                self.emit.mov(TMP, RAX);
+                self.emit_allocation(map0,
+                                     self.universe.pair_info.sizeof_instance() as i32,
+                                     &[(true, TMP)]);
+                self.emit
+                    .mov(&(RAX + 8), TMP)
+                    .mov(TMP, self.universe.pair_info.entry_word() as i64)
+                    .mov(&closure_info(RAX), TMP)
+                    .pop(TMP)
+                    .mov(&(RAX + 16), TMP);
+            }
             &NMkOopArray(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
@@ -701,9 +717,13 @@ fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize)
         .push(CLOSURE_PTR);
 
     let frame_slots = frame_descr.local_slot_count();
-    if frame_slots != 0 {
-        emit.add(RSP, -8 * (frame_slots as i32));
+    // XXX: Need to disable GC for uninitialized slots.
+    for _ in 0..frame_slots {
+        emit.push(0);
     }
+    //if frame_slots != 0 {
+    //    emit.add(RSP, -8 * (frame_slots as i32));
+    //}
 
     let bare_entry = emit.here();
 

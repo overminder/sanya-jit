@@ -355,6 +355,7 @@ pub trait IsOop : Sized {
 impl IsOop for Closure {}
 impl IsOop for Fixnum {}
 impl IsOop for Pair {}
+impl IsOop for MutBox {}
 impl IsOop for OopArray {}
 impl IsOop for I64Array {}
 

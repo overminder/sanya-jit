@@ -1,9 +1,8 @@
 (define loop
-  (lambda ()
-    (+# 1 2)
-    (loop)))
+  (lambda (n)
+    (loop (+# n 1))))
 
 (define main
   (lambda ()
-    (loop)))
+    (loop 0)))
 

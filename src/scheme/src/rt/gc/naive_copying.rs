@@ -111,7 +111,10 @@ impl GcState {
             for gcref in gcrefs {
                 match *gcref {
                     GcRef::OopConst(offset) => {
-                        self.scavenge(transmute(entry_word + offset as usize))
+                        let dst = entry_word + offset as usize;
+                        trace!("scavenge_oopconst({:?}): [*{:?}] -> {:#x} (={:#x})",
+                               info, gcref, dst, *(dst as *const Oop));
+                        self.scavenge(transmute(dst));
                     }
                     GcRef::PcRelInfoEntry(offset) => {
                         let loc = entry_word + offset as usize;
@@ -171,7 +174,7 @@ impl GcState {
     }
 
     unsafe fn finish_collection(&mut self,
-                                    compiled_infos: &mut Option<&mut Vec<*const ClosureInfo>>) {
+                                compiled_infos: &mut Option<&mut Vec<*const ClosureInfo>>) {
         if let &mut Some(ref mut compiled_infos) = compiled_infos {
             let mut i = 0;
             while i < compiled_infos.len() {
@@ -235,9 +238,10 @@ impl GcState {
 
         // Scavenge native frames.
         if let Some(native_frames) = args.native_frames.as_mut() {
-            for frame in native_frames {
-                for oop_slot in frame.iter_oop() {
-                    trace!("  iter_oop: *{:#x} -> {:#x}",
+            for (frame_no, frame) in native_frames.enumerate() {
+                for (oop_ix, oop_slot) in frame.iter_oop().enumerate() {
+                    trace!("  frame[{}].oop[{}]: *{:#x} -> {:#x}",
+                           frame_no, oop_ix,
                            oop_slot as *const _ as usize,
                            *oop_slot);
                     self.scavenge(oop_slot);

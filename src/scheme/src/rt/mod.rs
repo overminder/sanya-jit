@@ -128,6 +128,10 @@ impl Universe {
         unsafe { Closure::from_raw(oop).info_is(&self.pair_info) }
     }
 
+    pub fn oop_is_mutbox(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info_is(&self.box_info) }
+    }
+
     pub fn oop_is_fixnum(&self, oop: Oop) -> bool {
         unsafe { Closure::from_raw(oop).info_is(&self.fixnum_info) }
     }
