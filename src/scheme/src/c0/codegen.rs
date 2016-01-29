@@ -5,14 +5,14 @@ use ast::id::*;
 use ast::nir::RawNode::*;
 use rt::*;
 use rt::oop::*;
-use rt::stackmap::{StackMap, StackMapTable, EXTRA_CALLER_SAVED_FRAME_SLOTS};
+use rt::stackmap::*;
 
 use assembler::x64::*;
 use assembler::x64::R64::*;
 use assembler::emit::{Emit, Label};
 
 use std::collections::HashMap;
-use std::mem::transmute;
+use std::mem::{transmute, size_of};
 
 pub struct CompiledModule {
     pub emit: Emit,
@@ -184,9 +184,10 @@ impl<'a> NodeCompiler<'a> {
             // Sync the runtime regs with the universe.
             self.emit
                 .mov(&universe_alloc_ptr(), ALLOC_PTR)
-                .mov(&universe_saved_rbp(), RBP)
-                .lea(TMP, &mut label_ret_addr)
-                .mov(&universe_saved_rip(), TMP);
+                .mov(TMP, &universe_invocation_chain())
+                .lea(TMP2, &mut label_ret_addr)
+                .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_RIP), TMP2)
+                .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_RBP), RBP);
         }
 
         // Do the actuall call.
@@ -683,16 +684,8 @@ fn universe_alloc_limit() -> Addr {
     Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_ALLOC_LIMIT)
 }
 
-fn universe_saved_rip() -> Addr {
-    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_SAVED_RIP)
-}
-
-fn universe_saved_rbp() -> Addr {
-    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_SAVED_RBP)
-}
-
-fn universe_base_rbp() -> Addr {
-    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_BASE_RBP)
+fn universe_invocation_chain() -> Addr {
+    Addr::BD(UNIVERSE_PTR, OFFSET_OF_UNIVERSE_INVOCATION_CHAIN)
 }
 
 fn frame_slot(ix: usize) -> Addr {
@@ -719,11 +712,12 @@ fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize)
     let frame_slots = frame_descr.local_slot_count();
     // XXX: Need to disable GC for uninitialized slots.
     for _ in 0..frame_slots {
-        emit.push(0);
+        // Sign-extended to i64.
+        emit.push(0_i32);
     }
-    //if frame_slots != 0 {
+    // if frame_slots != 0 {
     //    emit.add(RSP, -8 * (frame_slots as i32));
-    //}
+    // }
 
     let bare_entry = emit.here();
 
@@ -753,7 +747,7 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     m
 }
 
-pub fn make_rust_entry(emit: &mut Emit) -> usize {
+pub fn make_rust_entry(emit: &mut Emit) -> (usize, usize) {
     // 1. Build up an entry.
     let mut entry = Label::new();
     emit_nop_until_aligned(emit, 0x10);
@@ -769,16 +763,31 @@ pub fn make_rust_entry(emit: &mut Emit) -> usize {
 
     // Get the relevant regs from/to the runtime state.
     emit.mov(UNIVERSE_PTR, RSI)
-        .mov(&universe_base_rbp(), RBP)
         .mov(ALLOC_PTR, &universe_alloc_ptr());
+
+    // Make space for the base rbp list node and
+    // add the current rbp to the base rbp list.
+    emit.sub(RSP, size_of::<NativeInvocationChain>() as i32);
+    emit.mov(TMP, &universe_invocation_chain())
+        .mov(&(RSP + OFFSET_OF_ICHAIN_NEXT), TMP)
+        .mov(&(RSP + OFFSET_OF_ICHAIN_BASE_RBP), RBP)
+        .mov(TMP, 0_i64)
+        .mov(&(RSP + OFFSET_OF_ICHAIN_TOP_RBP), TMP)
+        .mov(&(RSP + OFFSET_OF_ICHAIN_TOP_RIP), TMP)
+        .mov(&universe_invocation_chain(), RSP);
 
     // Enter the real main.
     emit.call(&Addr::B(CLOSURE_PTR));
 
-    // Sync back the regs to the runtime state.
+    // Sync back the regs to the runtime state,
+    // And pop the ichain.
     emit.mov(&universe_alloc_ptr(), ALLOC_PTR)
-        .mov(TMP, 0)
-        .mov(&universe_saved_rbp(), TMP);
+        .mov(TMP, &universe_invocation_chain())
+        .mov(TMP, &(TMP + OFFSET_OF_ICHAIN_NEXT))
+        .mov(&universe_invocation_chain(), TMP);
+
+    // Dealloc the rbp list node.
+    emit.add(RSP, size_of::<NativeInvocationChain>() as i32);
 
     // Restore the saved regs.
     emit.pop(UNIVERSE_PTR)
@@ -790,7 +799,8 @@ pub fn make_rust_entry(emit: &mut Emit) -> usize {
         .ret();
 
     // 2. Get it.
-    entry.offset().unwrap()
+    let entry_offset = entry.offset().unwrap();
+    (entry_offset, emit.here())
 }
 
 const CLOSURE_PTR: R64 = RDI;

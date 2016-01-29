@@ -8,29 +8,21 @@ pub mod stackmap;
 
 use self::oop::*;
 use self::gc::{GcState, FullGcArgs};
-use self::stackmap::{FrameIterator, StackMapTable};
+use self::stackmap::{NativeInvocationChain, FrameIterator, StackMapTable};
 
+use std::ptr;
 use std::cell::UnsafeCell;
 use std::mem::transmute;
 
 // XXX: Use offsetof after https://github.com/rust-lang/rfcs/issues/1144 is implemented.
-pub const OFFSET_OF_UNIVERSE_SAVED_RBP: i32 = 0 * 8;
-pub const OFFSET_OF_UNIVERSE_BASE_RBP: i32 = 1 * 8;
-pub const OFFSET_OF_UNIVERSE_SAVED_RIP: i32 = 2 * 8;
-pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 3 * 8;
-pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 4 * 8;
+pub const OFFSET_OF_UNIVERSE_INVOCATION_CHAIN: i32 = 0 * 8;
+pub const OFFSET_OF_UNIVERSE_ALLOC_PTR: i32 = 1 * 8;
+pub const OFFSET_OF_UNIVERSE_ALLOC_LIMIT: i32 = 2 * 8;
 
 #[repr(C)]
 pub struct Universe {
-    // The caller's rbp, used for traversing the stack.
-    saved_rbp: usize,
-
-    // The frame below the compiled main function. Stack traversal stops here.
-    base_rbp: usize,
-
-    // The caller's rip, used together with rip-to-stackmap to find
-    // the caller's stackmap.
-    saved_rip: usize,
+    // The current list of cross-runtime calls.
+    invocation_chain: *const NativeInvocationChain,
 
     pub gc: UnsafeCell<GcState>,
 
@@ -60,9 +52,7 @@ impl Universe {
         let empty_compiled_infos = box Default::default();
 
         let res = box Universe {
-            saved_rbp: 0,
-            base_rbp: 0,
-            saved_rip: 0,
+            invocation_chain: ptr::null(),
             gc: unsafe { UnsafeCell::new(GcState::new(heap_size)) },
             smt: &*empty_smt,
             empty_smt: empty_smt,
@@ -89,10 +79,10 @@ impl Universe {
     }
 
     pub fn iter_frame<'a, 'b>(&'b self, smt: &'a StackMapTable) -> Option<FrameIterator<'a>> {
-        if self.saved_rbp == 0 {
+        if self.invocation_chain.is_null() {
             None
         } else {
-            Some(FrameIterator::new(self.saved_rbp, self.saved_rip, smt, self.base_rbp))
+            Some(FrameIterator::new(smt, self.invocation_chain))
         }
     }
 

@@ -1,6 +1,7 @@
 use super::oop::Oop;
 
 use fnv::FnvHasher;
+use std::ptr;
 use std::mem::transmute;
 use std::collections::HashMap;
 use std::collections::hash_state::DefaultState;
@@ -168,27 +169,32 @@ impl StackMap {
 pub struct Frame {
     rbp: usize,
     rip: usize,
+    base_rbp: usize,
     stackmap: StackMap,
 }
 
 impl Frame {
-    pub fn new(rbp: usize, rip: usize, stackmap: StackMap) -> Self {
+    pub fn new(rbp: usize, rip: usize, base_rbp: usize, stackmap: StackMap) -> Self {
         Frame {
             rbp: rbp,
             rip: rip,
+            base_rbp: base_rbp,
             stackmap: stackmap,
         }
     }
 
-    unsafe fn prev(&self, smt: &StackMapTable, until_rbp: usize) -> Option<Self> {
+    pub fn new_read_smt(rbp: usize, rip: usize, base_rbp: usize, smt: &StackMapTable) -> Self {
+        Frame::new(rbp, rip, base_rbp, smt.get(rip).unwrap().to_owned())
+    }
+
+    unsafe fn prev(&self, smt: &StackMapTable) -> Option<Self> {
         let prev_rbp = read_word(self.rbp, 0);
         let prev_rip = read_word(self.rbp, 8);
-        if prev_rbp >= until_rbp {
-            assert_eq!(prev_rbp, until_rbp);
+        if prev_rbp >= self.base_rbp {
+            assert_eq!(prev_rbp, self.base_rbp);
             None
         } else {
-            let next_stackmap = smt.get(prev_rip).unwrap();
-            Some(Frame::new(prev_rbp, prev_rip, *next_stackmap))
+            Some(Frame::new_read_smt(prev_rbp, prev_rip, self.base_rbp, smt))
         }
     }
 
@@ -200,20 +206,65 @@ impl Frame {
     }
 }
 
+pub const OFFSET_OF_ICHAIN_NEXT: i32 = 0;
+pub const OFFSET_OF_ICHAIN_BASE_RBP: i32 = 8;
+pub const OFFSET_OF_ICHAIN_TOP_RBP: i32 = 16;
+pub const OFFSET_OF_ICHAIN_TOP_RIP: i32 = 24;
+
+// A linked list of Rust->Native->Rust calls.
+// This is used to traverse the native stacks and thus ensure the
+// reentrancy for both runtimes.
+#[repr(C)]
+pub struct NativeInvocationChain {
+    next: *const NativeInvocationChain,
+
+    // The first native frame. Stack traversal stops here.
+    pub base_rbp: usize,
+
+    // The caller's rbp.
+    pub top_rbp: usize,
+
+    // The caller's rip, used together with the StackMapTable to find
+    // the caller's stackmap.
+    pub top_rip: usize,
+}
+
+impl NativeInvocationChain {
+    unsafe fn next(&self) -> &NativeInvocationChain {
+        &*self.next
+    }
+}
+
+// Used to manually assign the basic block labels.
+enum FrameIteratorLabel {
+    CheckChain,
+    Finished,
+    NextChain,
+    CheckAndYieldFrame,
+    NextFrame,
+}
+
 pub struct FrameIterator<'a> {
     frame: Option<Frame>,
-    until_rbp: usize,
+    chain: *const NativeInvocationChain,
     smt: &'a StackMapTable,
+
+    // Used for iteration.
+    reentry_label: FrameIteratorLabel,
 }
 
 impl<'a> FrameIterator<'a> {
-    pub fn new(rbp: usize, rip: usize, smt: &'a StackMapTable, until_rbp: usize) -> Self {
-        let stackmap = smt.get(rip).unwrap();
+    pub fn new(smt: &'a StackMapTable, chain: *const NativeInvocationChain) -> Self {
         FrameIterator {
-            frame: Some(Frame::new(rbp, rip, *stackmap)),
-            until_rbp: until_rbp,
+            frame: None,
+            chain: chain,
             smt: smt,
+            reentry_label: FrameIteratorLabel::CheckChain,
         }
+    }
+
+    unsafe fn deref_nic(&self) -> &NativeInvocationChain {
+        &*self.chain
     }
 }
 
@@ -221,11 +272,46 @@ impl<'a> Iterator for FrameIterator<'a> {
     type Item = Frame;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(frame) = self.frame.take() {
-            self.frame = unsafe { frame.prev(self.smt, self.until_rbp) };
-            Some(frame)
-        } else {
-            None
+        use self::FrameIteratorLabel::*;
+
+        unsafe {
+            loop {
+                match self.reentry_label {
+                    CheckChain => {
+                        self.reentry_label = if self.chain.is_null() {
+                            Finished
+                        } else {
+                            NextChain
+                        };
+                    }
+                    Finished => {
+                        return None;
+                    }
+                    NextChain => {
+                        self.frame = Some(Frame::new_read_smt(self.deref_nic().top_rbp,
+                                                              self.deref_nic().top_rip,
+                                                              self.deref_nic().base_rbp,
+                                                              self.smt));
+                        self.chain = self.deref_nic().next();
+                        self.reentry_label = CheckAndYieldFrame;
+                    }
+                    CheckAndYieldFrame => {
+                        match self.frame {
+                            Some(f) => {
+                                self.reentry_label = NextFrame;
+                                return Some(f);
+                            }
+                            None => {
+                                self.reentry_label = CheckChain;
+                            }
+                        }
+                    }
+                    NextFrame => {
+                        self.frame = self.frame.unwrap().prev(self.smt);
+                        self.reentry_label = CheckAndYieldFrame;
+                    }
+                }
+            }
         }
     }
 }

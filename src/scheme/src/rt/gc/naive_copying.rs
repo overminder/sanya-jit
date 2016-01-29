@@ -113,7 +113,10 @@ impl GcState {
                     GcRef::OopConst(offset) => {
                         let dst = entry_word + offset as usize;
                         trace!("scavenge_oopconst({:?}): [*{:?}] -> {:#x} (={:#x})",
-                               info, gcref, dst, *(dst as *const Oop));
+                               info,
+                               gcref,
+                               dst,
+                               *(dst as *const Oop));
                         self.scavenge(transmute(dst));
                     }
                     GcRef::PcRelInfoEntry(offset) => {
@@ -241,7 +244,8 @@ impl GcState {
             for (frame_no, frame) in native_frames.enumerate() {
                 for (oop_ix, oop_slot) in frame.iter_oop().enumerate() {
                     trace!("  frame[{}].oop[{}]: *{:#x} -> {:#x}",
-                           frame_no, oop_ix,
+                           frame_no,
+                           oop_ix,
                            oop_slot as *const _ as usize,
                            *oop_slot);
                     self.scavenge(oop_slot);

@@ -22,7 +22,7 @@ pub struct LinkedModule {
 
 impl LinkedModule {
     pub unsafe fn new(mut cm: CompiledModule, u: &Universe) -> Self {
-        let rust_entry_offset = make_rust_entry(&mut cm.emit);
+        let (rust_entry_offset, rust_entry_end_offset) = make_rust_entry(&mut cm.emit);
 
         let mut jitmem = JitMem::new(cm.emit.as_ref());
         let start = jitmem.start();
@@ -54,6 +54,9 @@ impl LinkedModule {
             debug!("  gcrefs = {:?}", gcrefs);
             info.set_gcrefs(gcrefs);
         }
+        debug!("RustEntry: [{:#x},{:#x})",
+               start + rust_entry_offset,
+               start + rust_entry_end_offset);
 
         // Make oop consts.
         for func in cm.functions.values() {
