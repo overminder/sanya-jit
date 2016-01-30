@@ -78,12 +78,8 @@ impl Universe {
         &mut *self.gc.get()
     }
 
-    pub fn iter_frame<'a, 'b>(&'b self, smt: &'a StackMapTable) -> Option<FrameIterator<'a>> {
-        if self.invocation_chain.is_null() {
-            None
-        } else {
-            Some(FrameIterator::new(smt, self.invocation_chain))
-        }
+    pub fn iter_frame<'a, 'b>(&'b self, smt: &'a StackMapTable) -> FrameIterator<'a> {
+        FrameIterator::new(smt, self.invocation_chain)
     }
 
     pub fn set_smt(&mut self, smt: &StackMapTable) {
@@ -105,7 +101,7 @@ impl Universe {
     fn gcargs(&self) -> FullGcArgs {
         FullGcArgs {
             handle_block: &*self.handle_block,
-            native_frames: self.iter_frame(self.smt()),
+            native_frames: Some(self.iter_frame(self.smt())),
             compiled_infos: Some(self.compiled_infos()),
         }
     }

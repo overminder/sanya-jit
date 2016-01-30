@@ -239,7 +239,8 @@ pub enum RawNode {
 #[derive(Debug, Clone, Copy)]
 pub enum PrimOpO {
     Display,
-    PanicInlineSym,
+    Eval,
+    Panic,
     Fixnump,
 }
 

@@ -3,7 +3,6 @@ use super::sexpr::SExpr::*;
 use super::id::*;
 use super::nir::*;
 use super::nir::RawNode::*;
-use rt::inlinesym::InlineSym;
 
 fn unwrap_sym_list(e: &SExpr) -> Result<Vec<Id>, String> {
     let es = try!(e.unwrap_list());
@@ -123,15 +122,8 @@ impl Context {
                         NMkPair(box self.compile_expr(car, fdc, false),
                                 box self.compile_expr(cdr, fdc, false))
                     }
-                    [Sym(ref tag), ref e1] if tag == "display#" => {
-                        NPrimO(PrimOpO::Display, box self.compile_expr(e1, fdc, false))
-                    }
-                    [Sym(ref tag), ref e1] if tag == "fixnum?#" => {
-                        NPrimO(PrimOpO::Fixnump, box self.compile_expr(e1, fdc, false))
-                    }
-                    [Sym(ref tag), Sym(ref val)] if tag == "panic-inline-sym#" => {
-                        NPrimO(PrimOpO::PanicInlineSym,
-                               box NMkFixnum(InlineSym::from_str(&val).unwrap().as_word() as isize))
+                    [Sym(ref tag), ref e1] if as_prim_o_op(tag).is_some() => {
+                        NPrimO(as_prim_o_op(tag).unwrap(), box self.compile_expr(e1, fdc, false))
                     }
                     [Sym(ref tag), ref val] if tag == "mk-box#" => {
                         NMkBox(box self.compile_expr(val, fdc, false))
@@ -143,15 +135,10 @@ impl Context {
                         NWriteBox(box self.compile_expr(loc, fdc, false),
                                   box self.compile_expr(val, fdc, false))
                     }
-                    [Sym(ref tag), ref e1, ref e2] if is_prim_ff_op(tag) => {
+                    [Sym(ref tag), ref e1, ref e2] if as_prim_ff_op(tag).is_some() => {
                         let n1 = self.compile_expr(e1, fdc, false);
                         let n2 = self.compile_expr(e2, fdc, false);
-                        let op = match tag.as_ref() {
-                            "+#" => PrimOpFF::Add,
-                            "-#" => PrimOpFF::Sub,
-                            "<#" => PrimOpFF::Lt,
-                            _ => panic!("{}: Not a PrimOpFF", tag),
-                        };
+                        let op = as_prim_ff_op(tag).unwrap();
                         NPrimFF(op, box n1, box n2)
                     }
                     [Sym(ref tag), ref e1, ref e2, ref e3] if tag == "if" => {
@@ -189,6 +176,7 @@ impl Context {
                             } else if tag == "letrec" {
                                 let bindings = &es[1];
                                 let body = &es[2];
+                                panic!("letrec");
                             }
                         }
                         let func = self.compile_expr(&es[0], fdc, false);
@@ -259,9 +247,21 @@ impl NSeq0 {
     }
 }
 
-fn is_prim_ff_op(s: &str) -> bool {
-    match s {
-        "+#" | "-#" | "<#" => true,
-        _ => false,
-    }
+fn as_prim_ff_op(s: &str) -> Option<PrimOpFF> {
+    Some(match s {
+        "+#" => PrimOpFF::Add,
+        "-#" => PrimOpFF::Sub,
+        "<#" => PrimOpFF::Lt,
+        _ => return None,
+    })
+}
+
+fn as_prim_o_op(s: &str) -> Option<PrimOpO> {
+    Some(match s {
+        "display#" => PrimOpO::Display,
+        "panic!#" => PrimOpO::Panic,
+        "fixnum?#" => PrimOpO::Fixnump,
+        "eval#" => PrimOpO::Eval,
+        _ => return None,
+    })
 }

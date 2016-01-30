@@ -235,7 +235,7 @@ impl NativeInvocationChain {
     }
 }
 
-// Used to manually assign the basic block labels.
+// Used to manually construct a generator...
 enum FrameIteratorLabel {
     CheckChain,
     Finished,

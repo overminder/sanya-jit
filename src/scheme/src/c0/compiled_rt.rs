@@ -6,25 +6,27 @@ use rt::inlinesym::InlineSym;
 use std::mem::transmute;
 
 pub unsafe extern "C" fn display_oop(oop: Oop, u: &Universe) {
-    println!("{:?}", FmtOop(oop, u));
+    println!("{}", FmtOop(oop, u));
 }
 
-pub unsafe extern "C" fn panic_inline_sym(f: &Fixnum, universe: &Universe) {
+pub unsafe extern "C" fn eval_oop(oop: Oop, u: &Universe) -> Oop {
+    panic!("eval_oop")
+}
+
+pub unsafe extern "C" fn panic(universe: &Universe) {
     // Unwind the stack.
-    let reason = InlineSym::from_word(f.value() as usize);
-    println!("Panic (cause = {}), Unwinding the stack.", reason.as_str());
-    for (frame_no, frame) in universe.iter_frame(universe.smt()).unwrap().enumerate() {
+    println!("Panic, unwinding the stack.");
+    for (frame_no, frame) in universe.iter_frame(universe.smt()).enumerate() {
         println!("Frame {}: {:?}", frame_no, frame);
         for (slot_no, oop_slot) in frame.iter_oop().enumerate() {
             let oop = *oop_slot;
-            println!("  Slot {}: *{:#x} = {:?}",
+            println!("  Slot {}: *{:#x} = {}",
                      slot_no,
                      transmute::<_, usize>(oop_slot),
                      FmtOop(oop, universe));
         }
     }
-
-    panic!("panic_inline_sym: {}", reason.as_str());
+    panic!();
 }
 
 pub unsafe extern "C" fn full_gc(universe: &mut Universe, alloc_size: usize) -> usize {
@@ -46,12 +48,12 @@ pub unsafe extern "C" fn alloc_closure(u: &Universe, info_entry: usize, payloads
     trace!("alloc_closure: payloads = {:#x}", payloads as usize);
     let info = InfoTable::from_entry(info_entry);
     let closure = u.new_closure(info);
-    trace!("alloc_closure: Allocated {:?}", FmtOop(closure.as_oop(), u));
+    trace!("alloc_closure: Allocated {}", FmtOop(closure.as_oop(), u));
     for (i, upval_slot) in closure.ptr_payloads().iter_mut().enumerate() {
         let src = payloads.offset(i as isize);
         trace!("  move payload: from *{:#x} ({:#x})", src as usize, *src);
         *upval_slot = *src;
-        trace!("  move payload: to *{:#x} ({:?})",
+        trace!("  move payload: to *{:#x} ({})",
                upval_slot as *mut _ as usize,
                FmtOop(*upval_slot, u));
     }

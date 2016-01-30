@@ -147,7 +147,7 @@ impl GcState {
 
         let copied_to = self.copy(closure);
         self.scavenged_ptr_count += 1;
-        trace!("  Scavenge: {:?} @{:#x} -> {:?} @{:#x}",
+        trace!("  Scavenge: {} @{:#x} -> {} @{:#x}",
                FmtOop(closure.as_oop(), self.universe()),
                closure as *const _ as usize,
                FmtOop(copied_to.as_oop(), self.universe()),

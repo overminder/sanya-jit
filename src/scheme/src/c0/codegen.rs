@@ -194,6 +194,7 @@ impl<'a> NodeCompiler<'a> {
         f(self.emit);
         self.emit.bind(&mut label_ret_addr);
 
+        // And record the stackmap at this place.
         self.smt.insert(label_ret_addr.offset().unwrap(), stackmap);
 
         if cconv == CallingConv::SyncUniverse {
@@ -540,17 +541,18 @@ impl<'a> NodeCompiler<'a> {
                         self.emit
                             .mov(RDI, RAX)
                             .mov(RSI, UNIVERSE_PTR);
+                        // Safe to use conv::internal since we don't alloc in display.
                         self.calling_out(stackmap, CallingConv::Internal, |emit| {
                             emit.mov(RAX, unsafe { transmute::<_, i64>(display_oop) })
                                 .call(RAX);
                         });
                     }
-                    PrimOpO::PanicInlineSym => {
+                    PrimOpO::Panic => {
                         self.emit
-                            .mov(RDI, RAX)
-                            .mov(RSI, UNIVERSE_PTR);
+                            .mov(RDI, UNIVERSE_PTR);
+                        // Safe to use conv::internal since we don't alloc in display.
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(RAX, unsafe { transmute::<_, i64>(panic_inline_sym) })
+                            emit.mov(RAX, unsafe { transmute::<_, i64>(panic) })
                                 .call(RAX);
                         });
                     }
@@ -563,6 +565,16 @@ impl<'a> NodeCompiler<'a> {
                         self.load_reloc(RAX, Reloc::Fixnum(0));
 
                         self.emit.cmove(RAX, TMP);
+                    }
+                    PrimOpO::Eval => {
+                        self.emit
+                            .mov(RDI, RAX)
+                            .mov(RSI, UNIVERSE_PTR);
+                        // Safe to use internal since we don't alloc in display.
+                        self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+                            emit.mov(RAX, unsafe { transmute::<_, i64>(eval_oop) })
+                                .call(RAX);
+                        });
                     }
                 }
             }
@@ -739,9 +751,9 @@ fn new_stackmap_with_frame_descr(frame: &FrameDescr) -> StackMap {
     // For closure ptr
     m.push_gcptr();
 
-    // XXX: Check for gcptr-ness when FrameDescr has got that.
+    // Treat uninitialized local slots as non-oops.
     for _ in 0..frame.local_slot_count() {
-        m.push_gcptr();
+        m.push_word();
     }
 
     m
