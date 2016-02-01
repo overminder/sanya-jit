@@ -3,6 +3,7 @@ use super::compiled_rt::*;
 use ast::nir::*;
 use ast::id::*;
 use ast::nir::RawNode::*;
+use ast::nir::AllocNode::*;
 use rt::*;
 use rt::oop::*;
 use rt::stackmap::*;
@@ -236,16 +237,16 @@ impl<'a> NodeCompiler<'a> {
         debug!("load_info: {}[{:#x}] -> {}", self.sc_name, offset, name);
     }
 
-    fn compile(&mut self, node: &RawNode, stackmap: StackMap) -> CgResult<()> {
+    fn compile_alloc_node(&mut self, node: &AllocNode, stackmap: StackMap) -> CgResult<()> {
         match node {
-            &NMkFixnum(i) => {
+            &MkFixnum(i) => {
                 self.load_reloc(RAX, Reloc::Fixnum(i as i64));
                 // self.emit_fixnum_allocation(stackmap);
                 // self.emit
                 //    .mov(TMP, i as i64)
                 //    .mov(&(RAX + 8), TMP);
             }
-            &NMkPair(ref car, ref cdr) => {
+            &MkPair(ref car, ref cdr) => {
                 let mut map0 = stackmap;
                 self.compile(cdr, map0);
                 self.push_oop(RAX, &mut map0);
@@ -261,7 +262,7 @@ impl<'a> NodeCompiler<'a> {
                     .pop(TMP)
                     .mov(&(RAX + 16), TMP);
             }
-            &NMkOopArray(ref len, ref fill) => {
+            &MkOopArray(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
                 self.push_oop(RAX, &mut precall_map);
@@ -275,7 +276,7 @@ impl<'a> NodeCompiler<'a> {
                         .call(RAX);
                 });
             }
-            &NMkI64Array(ref len, ref fill) => {
+            &MkI64Array(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
                 // unbox and push `fill`
@@ -292,7 +293,7 @@ impl<'a> NodeCompiler<'a> {
                         .call(RAX);
                 });
             }
-            &NMkClosure(closure_id) => {
+            &MkClosure(closure_id) => {
                 let sc = self.scs[&closure_id];
                 let mut map0 = stackmap;
 
@@ -355,7 +356,7 @@ impl<'a> NodeCompiler<'a> {
                 // Restore the stack ptr.
                 self.emit.add(RSP, 8 * npayloads as i32);
             }
-            &NMkBox(ref n) => {
+            &MkBox(ref n) => {
                 try!(self.compile(n, stackmap));
                 self.emit.mov(TMP, RAX);
                 self.emit_allocation(stackmap,
@@ -365,6 +366,15 @@ impl<'a> NodeCompiler<'a> {
                     .mov(&(RAX + 8), TMP)
                     .mov(TMP, self.universe.box_info.entry_word() as i64)
                     .mov(&closure_info(RAX), TMP);
+            }
+        }
+        Ok(())
+    }
+
+    fn compile(&mut self, node: &RawNode, stackmap: StackMap) -> CgResult<()> {
+        match node {
+            &NAlloc(ref alloc) => {
+                try!(self.compile_alloc_node(alloc, stackmap));
             }
             &NReadBox(ref n) => {
                 try!(self.compile(n, stackmap));
@@ -456,9 +466,14 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(RAX, &closure_ptr());
                 self.emit.mov(RAX, &upval_slot(RAX, ix));
             }
-            &NWriteLocal(ix, ref n) => {
-                try!(self.compile(n, stackmap));
-                self.emit.mov(&frame_slot(ix), RAX);
+            &NBindLocal(ref bs, ref n) => {
+                let mut map0 = stackmap;
+                for &(ix, ref bn) in bs {
+                    try!(self.compile(bn, map0));
+                    self.emit.mov(&frame_slot(ix), RAX);
+                    map0.set_local_slot(ix, true);
+                }
+                self.compile(n, map0);
             }
             &NReadArrayLength(ref arr) => {
                 let mut map0 = stackmap;
@@ -570,11 +585,9 @@ impl<'a> NodeCompiler<'a> {
                         self.emit
                             .mov(RDI, RAX)
                             .mov(RSI, UNIVERSE_PTR);
-                        // Safe to use internal since we don't alloc in display.
-                        self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(RAX, unsafe { transmute::<_, i64>(eval_oop) })
-                                .call(RAX);
-                        });
+
+                        // XXX
+                        panic!();
                     }
                 }
             }
@@ -722,14 +735,9 @@ fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize)
         .push(CLOSURE_PTR);
 
     let frame_slots = frame_descr.local_slot_count();
-    // XXX: Need to disable GC for uninitialized slots.
-    for _ in 0..frame_slots {
-        // Sign-extended to i64.
-        emit.push(0_i32);
+    if frame_slots != 0 {
+        emit.add(RSP, -8 * (frame_slots as i32));
     }
-    // if frame_slots != 0 {
-    //    emit.add(RSP, -8 * (frame_slots as i32));
-    // }
 
     let bare_entry = emit.here();
 

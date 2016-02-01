@@ -3,21 +3,21 @@
     (if (and (fixnum?# a)
              (fixnum?# b))
         (<# a b)
-        (panic-inline-sym# NOT-INT))))
+        (panic!# 0))))
 
 (define +
   (lambda (a b)
     (if (and (fixnum?# a)
              (fixnum?# b))
         (+# a b)
-        (panic-inline-sym# NOT-INT))))
+        (panic!# 1))))
 
 (define -
   (lambda (a b)
     (if (and (fixnum?# a)
              (fixnum?# b))
         (-# a b)
-        (panic-inline-sym# NOT-INT))))
+        (panic!# 2))))
 
 (define fibo
   (lambda (n)

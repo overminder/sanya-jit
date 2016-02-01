@@ -35,7 +35,7 @@ fn run_file(path: &str) -> io::Result<()> {
 
     let es = parse_many(&src).unwrap();
     // println!("Parsed sexpr: {:?}", es);
-    let mut scdefns: Vec<ScDefn> = compile_sc(&es);
+    let mut scdefns: Vec<ScDefn> = compile_sc(&es).unwrap();
     trace!("Compiled scdefns: {:?}", scdefns);
 
     lint_scdefns(&mut scdefns).unwrap();

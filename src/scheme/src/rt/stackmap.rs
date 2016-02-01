@@ -141,6 +141,10 @@ impl StackMap {
         self.push(true);
     }
 
+    pub fn set_local_slot(&mut self, ix: usize, value: bool) {
+        self.set_at(ix + 1 /* closure ptr */, value);
+    }
+
     pub fn push_word(&mut self) {
         self.push(false);
     }

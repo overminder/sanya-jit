@@ -191,14 +191,18 @@ impl Default for FrameDescrChain {
 }
 
 #[derive(Debug)]
+pub enum AllocNode {
+    MkFixnum(isize),
+    MkPair(Node, Node),
+    MkBox(Node),
+    MkOopArray(Node /* length */, Node /* fill */),
+    MkI64Array(Node /* length */, Node /* fill */),
+    MkClosure(Id),
+}
+
+#[derive(Debug)]
 pub enum RawNode {
-    // Allocations.
-    NMkFixnum(isize),
-    NMkPair(Node, Node),
-    NMkBox(Node),
-    NMkOopArray(Node /* length */, Node /* fill */),
-    NMkI64Array(Node /* length */, Node /* fill */),
-    NMkClosure(Id),
+    NAlloc(AllocNode),
 
     // Control flows.
     NCall {
@@ -217,7 +221,7 @@ pub enum RawNode {
     NReadArgument(usize),
     NReadSlot(Slot),
     // NReadClosure(usize),
-    NWriteLocal(usize, Node),
+    NBindLocal(Vec<(usize, RawNode)> /* binding */, Node /* cont */),
 
     NReadOopArray(Node, Node),
     NWriteOopArray(Node, Node, Node),
@@ -278,18 +282,15 @@ impl RawNode {
         match direction {
             Forward => {
                 match self {
-                    &mut NWriteLocal(_, ref mut n) |
                     &mut NReadArrayLength(ref mut n) |
-                    &mut NMkBox(ref mut n) |
                     &mut NReadBox(ref mut n) |
                     &mut NPrimO(_, ref mut n) => {
                         try!(n.traverse(t));
                     }
 
+                    &mut NAlloc(ref mut n) => try!(n.traverse(t)),
+
                     &mut NWriteBox(ref mut n1, ref mut n2) |
-                    &mut NMkPair(ref mut n1, ref mut n2) |
-                    &mut NMkOopArray(ref mut n1, ref mut n2) |
-                    &mut NMkI64Array(ref mut n1, ref mut n2) |
                     &mut NReadOopArray(ref mut n1, ref mut n2) |
                     &mut NReadI64Array(ref mut n1, ref mut n2) |
                     &mut NPrimFF(_, ref mut n1, ref mut n2) => {
@@ -321,8 +322,14 @@ impl RawNode {
                         }
                         try!(n.traverse(t));
                     }
-                    &mut NMkFixnum(..) |
-                    &mut NMkClosure(..) |
+
+                    &mut NBindLocal(ref mut bs, ref mut n) => {
+                        for &mut (_, ref mut b) in bs {
+                            try!(b.traverse(t));
+                        }
+                        try!(n.traverse(t));
+                    }
+
                     &mut NReadArgument(..) |
                     &mut NReadSlot(..) => {}
                 }
@@ -330,6 +337,24 @@ impl RawNode {
             Skip => {}
         }
         Ok(())
+    }
+}
+
+impl AllocNode {
+    pub fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E> {
+        use self::AllocNode::*;
+
+        match self {
+            &mut MkBox(ref mut n) => n.traverse(t),
+            &mut MkPair(ref mut n1, ref mut n2) |
+            &mut MkOopArray(ref mut n1, ref mut n2) |
+            &mut MkI64Array(ref mut n1, ref mut n2) => {
+                try!(n1.traverse(t));
+                n2.traverse(t)
+            }
+            &mut MkFixnum(..) |
+            &mut MkClosure(..) => Ok(()),
+        }
     }
 }
 

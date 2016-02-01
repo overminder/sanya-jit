@@ -6,7 +6,7 @@ use std::fmt::{self, Formatter, Display};
 // Format impl
 
 unsafe fn fmt_oop(oop: Oop, u: &Universe, fmt: &mut Formatter) -> fmt::Result {
-    if oop == 0 {
+    if oop == NULL_OOP {
         try!(write!(fmt, "<null>"));
     } else if u.oop_is_fixnum(oop) {
         let i = Fixnum::from_raw(oop);
