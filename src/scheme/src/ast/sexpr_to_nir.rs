@@ -202,13 +202,23 @@ impl Context {
                                 panic!("letrec");
                             } else if tag == "let" {
                                 let bs = try!(unwrap_bindings(&es[1]));
-                                // Independently bind to the names, and
-                                // expend the env with all the names at once,
+                                // Independently evaluate the bindees, and
+                                // expand the env with all the names at once,
                                 // before evaluating the body.
-                                for (name, e) in bs {
+                                let mut ns = vec![];
+                                for &(_, ref e) in &bs {
+                                    let n = try!(self.compile_expr(e, fdc, false));
+                                    ns.push(n);
                                 }
+
+                                let bs_ = bs.iter()
+                                            .map(|&(name, _)| fdc.create_local_slot(name))
+                                            .zip(ns.into_iter())
+                                            .collect();
                                 let body = try!(self.compile_expr_seq(&es[2..], fdc, tail))
                                                .into_nseq();
+
+                                return Ok(NBindLocal(bs_, box body));
                             }
                         }
                         let func = try!(self.compile_expr(&es[0], fdc, false));
