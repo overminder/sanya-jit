@@ -222,6 +222,7 @@ pub enum RawNode {
     NReadSlot(Slot),
     // NReadClosure(usize),
     NBindLocal(Vec<(usize, RawNode)> /* binding */, Node /* cont */),
+    NRecBindLocal(Vec<(usize, AllocNode)> /* recursive binding */, Node /* cont */),
 
     NReadOopArray(Node, Node),
     NWriteOopArray(Node, Node, Node),
@@ -272,10 +273,14 @@ pub enum TraversalDirection {
     Skip,
 }
 
-impl RawNode {
+pub trait Traverse : Sized {
+    fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E>;
+}
+
+impl Traverse for RawNode {
     // Monadic node traversals. The fixpoint functor could greatly simplify
     // this process but Rust currently doesn't have that.
-    pub fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E> {
+    fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E> {
         use self::TraversalDirection::*;
 
         let direction = try!(t.before(self));
@@ -330,6 +335,13 @@ impl RawNode {
                         try!(n.traverse(t));
                     }
 
+                    &mut NRecBindLocal(ref mut bs, ref mut n) => {
+                        for &mut (_, ref mut b) in bs {
+                            try!(b.traverse(t));
+                        }
+                        try!(n.traverse(t));
+                    }
+
                     &mut NReadArgument(..) |
                     &mut NReadSlot(..) => {}
                 }
@@ -340,8 +352,8 @@ impl RawNode {
     }
 }
 
-impl AllocNode {
-    pub fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E> {
+impl Traverse for AllocNode {
+    fn traverse<E, T: NodeTraverser<E>>(&mut self, t: &mut T) -> Result<(), E> {
         use self::AllocNode::*;
 
         match self {

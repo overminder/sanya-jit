@@ -178,8 +178,7 @@ impl Context {
                             if tag == "begin" {
                                 return Ok(try!(self.compile_expr_seq(&es[1..], fdc, tail))
                                               .into_nseq());
-                            } else if tag == "and" {
-                                assert!(es.len() == 3);
+                            } else if tag == "and" && es.len() == 3 {
                                 return Ok(NIf {
                                     cond: box try!(self.compile_expr(&es[1], fdc, false)),
                                     on_true: box try!(self.compile_expr(&es[2], fdc, tail)),
@@ -200,6 +199,20 @@ impl Context {
                                 let bindings = &es[1];
                                 let body = &es[2];
                                 panic!("letrec");
+                            } else if tag == "let*" {
+                                // Just a sequence of defines.
+                                let bs = try!(unwrap_bindings(&es[1]));
+                                let mut bs_ = vec![];
+                                for &(name, ref e) in &bs {
+                                    let n = try!(self.compile_expr(e, fdc, false));
+                                    let ix = fdc.create_local_slot(name);
+                                    bs_.push((ix, n));
+                                }
+
+                                let body = try!(self.compile_expr_seq(&es[2..], fdc, tail))
+                                               .into_nseq();
+
+                                return Ok(NBindLocal(bs_, box body));
                             } else if tag == "let" {
                                 let bs = try!(unwrap_bindings(&es[1]));
                                 // Independently evaluate the bindees, and
@@ -244,7 +257,9 @@ impl Context {
                         fdc: &mut FrameDescrChain,
                         tail: bool)
                         -> CompileResult<NSeq0> {
-        assert!(es.len() >= 1);
+        if es.len() < 1 {
+            return Err(format!("empty expr seq"));
+        }
         let mut body = vec![];
         for e in &es[..es.len() - 1] {
             body.push(try!(self.compile_expr(e, fdc, false)));
