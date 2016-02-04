@@ -185,20 +185,47 @@ impl Context {
                                     on_false: box NAlloc(MkFixnum(0)),
                                 });
                             } else if tag == "lambda" {
-                                let (frame, mbLam) = fdc.new_inner(|mut new_chain| {
+                                let (frame, mb_lam) = fdc.new_inner(|mut new_chain| {
                                     self.compile_lambda(Id::fresh("lambda"),
                                                         &es[1],
                                                         &es[2..],
                                                         &mut new_chain)
                                 });
-                                let lam = try!(mbLam);
+                                let lam = try!(mb_lam);
                                 let name = lam.name();
                                 self.add_sc(lam.into_sc(frame));
                                 return Ok(NAlloc(MkClosure(name)));
                             } else if tag == "letrec" {
-                                let bindings = &es[1];
-                                let body = &es[2];
-                                panic!("letrec");
+                                let bs = try!(unwrap_bindings(&es[1]));
+
+                                // Make names.
+                                let ixs: Vec<usize> = bs.iter()
+                                                        .map(|&(name, _)| {
+                                                            fdc.create_local_slot(name)
+                                                        })
+                                                        .collect();
+
+                                // And allocate closures.
+                                let mut ns = vec![];
+                                for &(_, ref e) in &bs {
+                                    let n = try!(self.compile_expr(e, fdc, false));
+                                    ns.push(match n {
+                                        NAlloc(n) => n,
+                                        _ => {
+                                            return Err(format!("letrec expect alloc exprs, but \
+                                                                got {:?}",
+                                                               n))
+                                        }
+                                    });
+                                }
+
+                                let body = try!(self.compile_expr_seq(&es[2..], fdc, tail))
+                                               .into_nseq();
+
+                                return Ok(NRecBindLocal(ixs.into_iter()
+                                                           .zip(ns.into_iter())
+                                                           .collect(),
+                                                        box body));
                             } else if tag == "let*" {
                                 // Just a sequence of defines.
                                 let bs = try!(unwrap_bindings(&es[1]));

@@ -237,6 +237,56 @@ impl<'a> NodeCompiler<'a> {
         debug!("load_info: {}[{:#x}] -> {}", self.sc_name, offset, name);
     }
 
+    fn sizeof_alloc(&self, node: &AllocNode) -> CgResult<usize> {
+        Ok(match node {
+            &MkFixnum(_) => {
+                // Since it's a constant.
+                0
+            }
+            &MkPair(..) => self.universe.pair_info.sizeof_instance(),
+            &MkOopArray(..) |
+            &MkI64Array(..) => {
+                return Err(format!("Not a sized allocation: {:?}", node));
+            }
+            &MkClosure(closure_id) => {
+                let sc = self.scs[&closure_id];
+                let npayloads = sc.frame_descr().upval_refs().len();
+                ((1 + npayloads) * 8)
+            }
+            &MkBox(..) => 16,
+        })
+    }
+
+    // XXX: What does this do exactly?
+    fn compile_placement_init(&mut self, node: &AllocNode) -> CgResult<()> {
+        Ok(match node {
+            &MkClosure(closure_id) => {
+                let sc = self.scs[&closure_id];
+                let mut closure_ptr_loaded = false;
+                // XXX: Keep the size calculation in sync with rt::oop.
+                self.load_info(TMP, closure_id);
+                self.emit.mov(&closure_info(RAX), TMP);
+                for (to_ix, slot) in sc.frame_descr().upval_refs().iter().enumerate() {
+                    match slot {
+                        &Slot::UpVal(from_ix) => {
+                            if !closure_ptr_loaded {
+                                self.emit.mov(TMP2, &closure_ptr());
+                                closure_ptr_loaded = true;
+                            }
+                            self.emit.mov(TMP, &upval_slot(TMP2, from_ix));
+                        }
+                        &Slot::Local(from_ix) => {
+                            self.emit.mov(TMP, &frame_slot(from_ix));
+                        }
+                        _ => panic!("NMkClosure: upval_refs contain {:?}", slot),
+                    }
+                    self.emit.mov(&upval_slot(RAX, to_ix), TMP);
+                }
+            }
+            _ => return Err(format!("Not implemented: {:?}", node)),
+        })
+    }
+
     fn compile_alloc_node(&mut self, node: &AllocNode, stackmap: StackMap) -> CgResult<()> {
         match node {
             &MkFixnum(i) => {
@@ -248,9 +298,9 @@ impl<'a> NodeCompiler<'a> {
             }
             &MkPair(ref car, ref cdr) => {
                 let mut map0 = stackmap;
-                self.compile(cdr, map0);
+                try!(self.compile(cdr, map0));
                 self.push_oop(RAX, &mut map0);
-                self.compile(car, map0);
+                try!(self.compile(car, map0));
                 self.emit.mov(TMP, RAX);
                 self.emit_allocation(map0,
                                      self.universe.pair_info.sizeof_instance() as i32,
@@ -473,7 +523,37 @@ impl<'a> NodeCompiler<'a> {
                     self.emit.mov(&frame_slot(ix), RAX);
                     map0.set_local_slot(ix, true);
                 }
-                self.compile(n, map0);
+                try!(self.compile(n, map0));
+            }
+            &NRecBindLocal(ref bs, ref n) => {
+                let mut map0 = stackmap;
+                let alloc_sizes = try!(sequence_v(bs.iter()
+                                                    .map(|&(_, ref n)| self.sizeof_alloc(n))
+                                                    .collect()));
+                let total_alloc_size: usize = alloc_sizes.iter().sum();
+                // 1. Alloc all oops at once.
+                self.emit_allocation(map0, total_alloc_size as i32, &[]);
+
+                // 2. Bind the uninitiated oops to their local names.
+                let mut alloc_ptr_offset = 0;
+                for (ith_node, &(ix, ref bn)) in bs.iter().enumerate() {
+                    self.emit
+                        .lea(TMP, &(RAX + alloc_ptr_offset as i32))
+                        .mov(&frame_slot(ix), TMP);
+                    alloc_ptr_offset += alloc_sizes[ith_node];
+                    map0.set_local_slot(ix, true);
+                }
+
+                // 3. Initialize the oops.
+                for (ith_node, &(ix, ref bn)) in bs.iter().enumerate() {
+                    try!(self.compile_placement_init(bn));
+
+                    // Not the last node: increase the offset.
+                    if ith_node != bs.len() - 1 {
+                        self.emit.add(RAX, alloc_sizes[ith_node] as i32);
+                    }
+                }
+                try!(self.compile(n, map0));
             }
             &NReadArrayLength(ref arr) => {
                 let mut map0 = stackmap;
@@ -821,6 +901,14 @@ pub fn make_rust_entry(emit: &mut Emit) -> (usize, usize) {
     // 2. Get it.
     let entry_offset = entry.offset().unwrap();
     (entry_offset, emit.here())
+}
+
+fn sequence_v<A, E>(xs: Vec<Result<A, E>>) -> Result<Vec<A>, E> {
+    let mut ys = vec![];
+    for x in xs {
+        ys.push(try!(x));
+    }
+    Ok(ys)
 }
 
 const CLOSURE_PTR: R64 = RDI;
