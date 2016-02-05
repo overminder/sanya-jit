@@ -534,7 +534,7 @@ impl<'a> NodeCompiler<'a> {
                 // 1. Alloc all oops at once.
                 self.emit_allocation(map0, total_alloc_size as i32, &[]);
 
-                // 2. Bind the uninitiated oops to their local names.
+                // 2. Bind the uninitialized oops to their local names.
                 let mut alloc_ptr_offset = 0;
                 for (ith_node, &(ix, ref bn)) in bs.iter().enumerate() {
                     self.emit
