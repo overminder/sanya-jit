@@ -21,15 +21,32 @@ extern "rust-intrinsic" {
     fn breakpoint();
 }
 
+fn read_file(path: &str) -> io::Result<String> {
+    let mut s = String::new();
+    try!(read_file_with(path, &mut s));
+    Ok(s)
+}
+
+fn read_file_with(path: &str, out: &mut String) -> io::Result<()> {
+    let mut f = try!(File::open(path));
+    try!(f.read_to_string(out));
+    Ok(())
+}
+
+fn load_stdlib<S: AsRef<str>>(path: Option<S>) -> io::Result<String> {
+    match path {
+        Some(path) => read_file(path.as_ref()),
+        None => Ok(include_str!("../scheme-src/lib/std.ss").to_owned()),
+    }
+}
+
 fn run_file(path: &str) -> io::Result<()> {
     let break_before_main = env::var("SCM_CG_DEBUG").map(|_| true).unwrap_or(false);
     let heap_size = env::var("SCM_HEAP_SIZE").map(|x| x.parse().unwrap()).unwrap_or(0x10000);
 
-    let mut src = String::new();
-    {
-        let mut f = try!(File::open(path));
-        try!(f.read_to_string(&mut src));
-    }
+    let stdlib_path = env::var("SCM_STDLIB_PATH").ok();
+    let mut src = try!(load_stdlib(stdlib_path.as_ref()));
+    try!(read_file_with(path, &mut src));
 
     let mut universe = Universe::new(heap_size);
 

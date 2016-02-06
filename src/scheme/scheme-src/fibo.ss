@@ -1,24 +1,3 @@
-(define <
-  (lambda (a b)
-    (if (and (fixnum?# a)
-             (fixnum?# b))
-        (<# a b)
-        (panic!# 0))))
-
-(define +
-  (lambda (a b)
-    (if (and (fixnum?# a)
-             (fixnum?# b))
-        (+# a b)
-        (panic!# 1))))
-
-(define -
-  (lambda (a b)
-    (if (and (fixnum?# a)
-             (fixnum?# b))
-        (-# a b)
-        (panic!# 2))))
-
 (define fibo
   (lambda (n)
     (if (< n 2)
@@ -28,5 +7,5 @@
 
 (define main
   (lambda ()
-    (display# (fibo 40))))
+    (display (fibo 40))))
 
