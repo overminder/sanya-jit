@@ -47,6 +47,9 @@ unsafe fn read_word(ptr: usize, offset: isize) -> usize {
 // BTreeMap could sometimes be faster than using a HashMap<FnvHasher>...
 type PcRelToStackMap = HashMap<usize, StackMap, DefaultState<FnvHasher>>;
 
+// Offset to the closure entry.
+pub type StackMapOffsets = HashMap<usize, StackMap>;
+
 // Maps the rip offsets for return addresses to stackmaps.
 #[derive(Debug, Default)]
 pub struct StackMapTable {

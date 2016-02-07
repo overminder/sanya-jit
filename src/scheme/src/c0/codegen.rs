@@ -26,6 +26,7 @@ pub struct CompiledFunction {
     pub end_offset: usize,
     pub relocs: RelocTable,
     pub inforefs: InfoRefs,
+    pub smo: StackMapOffsets,
 }
 
 pub struct ModuleCompiler<'a> {
@@ -105,12 +106,14 @@ fn compile_function(emit: &mut Emit,
     };
     let (stackmap, bare_entry) = emit_prologue(emit, scdefn.frame_descr());
     let mut inforefs = Default::default();
+    let mut smo = Default::default();
     let mut relocs = vec![];
     {
         let mut nodecc = NodeCompiler {
             emit: emit,
             universe: u,
             smt: smt,
+            smo: &mut smo,
             relocs: &mut relocs,
             inforefs: &mut inforefs,
             labels: labels,
@@ -129,6 +132,7 @@ fn compile_function(emit: &mut Emit,
         end_offset: emit.here(),
         relocs: relocs,
         inforefs: inforefs,
+        smo: smo,
     }
 }
 
@@ -151,6 +155,7 @@ struct NodeCompiler<'a> {
     emit: &'a mut Emit,
     universe: &'a Universe,
     smt: &'a mut StackMapTable,
+    smo: &'a mut StackMapOffsets,
     relocs: &'a mut RelocTable,
     inforefs: &'a mut InfoRefs,
     labels: &'a mut LabelMap,
@@ -197,6 +202,7 @@ impl<'a> NodeCompiler<'a> {
 
         // And record the stackmap at this place.
         self.smt.insert(label_ret_addr.offset().unwrap(), stackmap);
+        self.smo.insert(label_ret_addr.offset().unwrap() - self.entry_offset, stackmap);
 
         if cconv == CallingConv::SyncUniverse {
             // Read back the runtime regs.
