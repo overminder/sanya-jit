@@ -17,7 +17,6 @@ use std::mem::{transmute, size_of};
 
 pub struct CompiledModule {
     pub emit: Emit,
-    pub smt: StackMapTable,
     pub functions: HashMap<Id, CompiledFunction>,
 }
 
@@ -26,12 +25,11 @@ pub struct CompiledFunction {
     pub end_offset: usize,
     pub relocs: RelocTable,
     pub inforefs: InfoRefs,
-    pub smo: StackMapOffsets,
+    pub smo: OopStackMapOffsets,
 }
 
 pub struct ModuleCompiler<'a> {
     function_labels: LabelMap,
-    smt: StackMapTable,
     emit: Emit,
     scdefns: ScDefns<'a>,
     compiled_functions: HashMap<Id, CompiledFunction>,
@@ -44,7 +42,6 @@ impl<'a> ModuleCompiler<'a> {
         ModuleCompiler {
             function_labels: HashMap::new(),
             compiled_functions: HashMap::new(),
-            smt: StackMapTable::new(),
             emit: Emit::new(),
             scdefns: Default::default(),
         }
@@ -60,7 +57,6 @@ impl<'a> ModuleCompiler<'a> {
                                         sc,
                                         &self.scdefns,
                                         &mut self.function_labels,
-                                        &mut self.smt,
                                         u);
             self.compiled_functions.insert(sc.name(), func);
         }
@@ -69,7 +65,6 @@ impl<'a> ModuleCompiler<'a> {
     pub fn into_compiled_module(self) -> CompiledModule {
         CompiledModule {
             emit: self.emit,
-            smt: self.smt,
             functions: self.compiled_functions,
         }
     }
@@ -81,7 +76,6 @@ fn compile_function(emit: &mut Emit,
                     scdefn: &ScDefn,
                     scs: &ScDefns,
                     labels: &mut LabelMap,
-                    smt: &mut StackMapTable,
                     u: &Universe)
                     -> CompiledFunction {
     // Align the function entry.
@@ -112,7 +106,6 @@ fn compile_function(emit: &mut Emit,
         let mut nodecc = NodeCompiler {
             emit: emit,
             universe: u,
-            smt: smt,
             smo: &mut smo,
             relocs: &mut relocs,
             inforefs: &mut inforefs,
@@ -154,8 +147,7 @@ enum CallingConv {
 struct NodeCompiler<'a> {
     emit: &'a mut Emit,
     universe: &'a Universe,
-    smt: &'a mut StackMapTable,
-    smo: &'a mut StackMapOffsets,
+    smo: &'a mut OopStackMapOffsets,
     relocs: &'a mut RelocTable,
     inforefs: &'a mut InfoRefs,
     labels: &'a mut LabelMap,
@@ -201,8 +193,8 @@ impl<'a> NodeCompiler<'a> {
         self.emit.bind(&mut label_ret_addr);
 
         // And record the stackmap at this place.
-        self.smt.insert(label_ret_addr.offset().unwrap(), stackmap);
-        self.smo.insert(label_ret_addr.offset().unwrap() - self.entry_offset, stackmap);
+        self.smo.insert(label_ret_addr.offset().unwrap() - self.entry_offset,
+                        stackmap);
 
         if cconv == CallingConv::SyncUniverse {
             // Read back the runtime regs.

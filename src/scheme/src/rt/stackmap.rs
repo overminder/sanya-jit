@@ -43,38 +43,55 @@ unsafe fn read_word(ptr: usize, offset: isize) -> usize {
     *(((ptr as isize) + offset) as *const usize)
 }
 
+// (absolute return address, StackMap)
+//
 // Still, the impact on the performance is quite minor. It seems that using a
 // BTreeMap could sometimes be faster than using a HashMap<FnvHasher>...
-type PcRelToStackMap = HashMap<usize, StackMap, DefaultState<FnvHasher>>;
+type PcToStackMap = HashMap<usize, StackMap, DefaultState<FnvHasher>>;
 
-// Offset to the closure entry.
-pub type StackMapOffsets = HashMap<usize, StackMap>;
+// (return address relative to the closure entry, StackMap)
+pub type OopStackMapOffsets = HashMap<usize, StackMap>;
 
 // Maps the rip offsets for return addresses to stackmaps.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct StackMapTable {
-    start: Option<usize>,
-    offsets: PcRelToStackMap,
+    offsets: PcToStackMap,
 }
 
 impl StackMapTable {
     pub fn new() -> Self {
-        StackMapTable {
-            start: None,
-            offsets: Default::default(),
-        }
+        StackMapTable { offsets: Default::default() }
     }
 
     pub fn insert(&mut self, offset: usize, sm: StackMap) {
         self.offsets.insert(offset, sm);
     }
 
-    pub fn set_start(&mut self, start: usize) {
-        self.start = Some(start);
+    pub fn get(&self, rip: usize) -> Option<&StackMap> {
+        self.offsets.get(&rip)
+    }
+}
+
+pub struct StackMapTableInserter {
+    start: usize,
+}
+
+impl StackMapTableInserter {
+    pub fn new(start: usize) -> Self {
+        StackMapTableInserter { start: start }
     }
 
-    pub fn get(&self, rip: usize) -> Option<&StackMap> {
-        self.offsets.get(&(rip - self.start.unwrap()))
+    pub fn insert(&self, smt: &mut StackMapTable, offset: usize, sm: StackMap) {
+        smt.insert(self.start + offset, sm);
+    }
+
+    pub fn extend_with_smo(&self,
+                           smt: &mut StackMapTable,
+                           entry_offset: usize,
+                           smo: &OopStackMapOffsets) {
+        for (retaddr_offset, stackmap) in smo {
+            self.insert(smt, entry_offset + retaddr_offset, stackmap.to_owned())
+        }
     }
 }
 

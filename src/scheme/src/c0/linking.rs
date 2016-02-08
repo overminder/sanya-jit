@@ -3,7 +3,7 @@ use super::codegen::{CompiledModule, make_rust_entry};
 use ast::id::Id;
 use rt::*;
 use rt::oop::*;
-use rt::stackmap::StackMapTable;
+use rt::stackmap::{StackMapTable, StackMapTableInserter};
 use assembler::mem::JitMem;
 
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ pub type JitEntry = unsafe extern "C" fn(Oop, *const Universe);
 pub struct LinkedModule {
     jitmem: JitMem,
     rust_entry_offset: usize,
-    main_closure: Handle<Closure>,
+    global_closures: Option<GlobalTable>,
     smt: StackMapTable,
     infotables: Vec<*const ClosureInfo>,
 }
@@ -26,15 +26,19 @@ impl LinkedModule {
 
         let mut jitmem = JitMem::new(cm.emit.as_ref());
         let start = jitmem.start();
-        cm.smt.set_start(start);
+        let smti = StackMapTableInserter::new(start);
 
         let mut global_closures: GlobalTable = HashMap::new();
 
         let mut infotables = vec![];
 
+        let mut smt: StackMapTable = Default::default();
+
         // Make closures.
         for (func_name, ref func) in &cm.functions {
             let info = InfoTable::from_entry(start + func.entry_offset);
+            smti.extend_with_smo(&mut smt, func.entry_offset, &func.smo);
+            info.set_smo(func.smo.to_owned());
             infotables.push(info as *const _);
             let closure = u.new_closure(info);  // Allocates
             global_closures.insert(func_name.to_owned(), closure);
@@ -73,8 +77,8 @@ impl LinkedModule {
         LinkedModule {
             jitmem: jitmem,
             rust_entry_offset: rust_entry_offset,
-            main_closure: global_closures[&Id::named("main")].dup(),
-            smt: cm.smt,
+            global_closures: Some(global_closures),
+            smt: smt,
             infotables: infotables,
         }
     }
@@ -87,10 +91,19 @@ impl LinkedModule {
         &self.smt
     }
 
-    pub unsafe fn call_entry(&mut self, u: &mut Universe) {
+    pub unsafe fn call_nullary(&mut self, u: &mut Universe, name: &str) {
+        use std::collections::hash_map::Entry::Occupied;
+
         u.set_smt(&self.smt);
         u.set_compiled_infos(&mut self.infotables);
-        let entry = transmute::<_, JitEntry>(self.jitmem.start() + self.rust_entry_offset);
-        entry(*self.main_closure.oop(), u as *const _);
+        let rust_entry = transmute::<_, JitEntry>(self.jitmem.start() + self.rust_entry_offset);
+        let oop_entry = {
+            let mut global_closures = self.global_closures.take().unwrap();
+            match global_closures.entry(Id::named(name)) {
+                Occupied(o) => o.remove(),
+                _ => panic!("call_nullary: closure {} not defined.", name),
+            }
+        };
+        rust_entry(*oop_entry.oop(), u as *const _);
     }
 }

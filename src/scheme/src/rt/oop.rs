@@ -2,7 +2,7 @@
 /// (I did try to come up with a better name but failed.)
 
 use super::gc::INFO_FRESH_TAG;
-use super::stackmap::StackMapOffsets;
+use super::stackmap::OopStackMapOffsets;
 
 use std::slice;
 use std::ptr;
@@ -54,7 +54,7 @@ pub struct InfoTable<A> {
     // XXX: Using Option<Box<T>> safely with mem::zeroed relies on that
     // Rust internally treats None<Box<T>> as nullptr.
     gcrefs: Option<Box<[GcRef]>>,
-    smo: Option<Box<StackMapOffsets>>,
+    smo: Option<Box<OopStackMapOffsets>>,
     name: Option<Box<String>>,
     gc_mark_word: UnsafeCell<usize>,
     arity: u16,
@@ -131,6 +131,10 @@ impl<A> InfoTable<A> {
 
     pub unsafe fn gcrefs(&self) -> Option<&[GcRef]> {
         self.gcrefs.as_ref().map(|rb| &**rb)
+    }
+
+    pub fn set_smo(&mut self, smo: OopStackMapOffsets) {
+        self.smo = Some(box smo);
     }
 
     pub fn gc_mark_word(&self) -> &mut usize {

@@ -62,7 +62,7 @@ fn run_file(path: &str) -> io::Result<()> {
         if break_before_main {
             breakpoint();
         }
-        linked.call_entry(&mut universe);
+        linked.call_nullary(&mut universe, "main");
         universe.gc_mut().log_stat();
     }
 
