@@ -91,19 +91,21 @@ impl LinkedModule {
         &self.smt
     }
 
-    pub unsafe fn call_nullary(&mut self, u: &mut Universe, name: &str) {
+    pub fn take_closure(&mut self, name: &str) -> Handle<Closure> {
         use std::collections::hash_map::Entry::Occupied;
 
+        let mut global_closures = self.global_closures.take().unwrap();
+        match global_closures.entry(Id::named(name)) {
+            Occupied(o) => o.remove(),
+            _ => panic!("call_nullary: closure {} not defined.", name),
+        }
+    }
+
+    pub unsafe fn call_nullary(&mut self, u: &mut Universe, name: &str) {
         u.set_smt(&self.smt);
         u.set_compiled_infos(&mut self.infotables);
         let rust_entry = transmute::<_, JitEntry>(self.jitmem.start() + self.rust_entry_offset);
-        let oop_entry = {
-            let mut global_closures = self.global_closures.take().unwrap();
-            match global_closures.entry(Id::named(name)) {
-                Occupied(o) => o.remove(),
-                _ => panic!("call_nullary: closure {} not defined.", name),
-            }
-        };
+        let oop_entry = self.take_closure(name);
         rust_entry(*oop_entry.oop(), u as *const _);
     }
 }

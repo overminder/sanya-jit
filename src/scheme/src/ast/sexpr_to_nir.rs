@@ -4,6 +4,7 @@ use super::id::*;
 use super::nir::*;
 use super::nir::RawNode::*;
 use super::nir::AllocNode::*;
+use super::nir::LiteralNode::*;
 
 fn unwrap_sym_list(e: &SExpr) -> CompileResult<Vec<Id>> {
     let es = try!(e.unwrap_list());
@@ -178,11 +179,14 @@ impl Context {
                             if tag == "begin" {
                                 return Ok(try!(self.compile_expr_seq(&es[1..], fdc, tail))
                                               .into_nseq());
+                            } else if tag == "quote" && es.len() == 2 {
+                                // XXX: Constant.
+                                return Ok(NLit(LitAny(es[1].to_owned())));
                             } else if tag == "and" && es.len() == 3 {
                                 return Ok(NIf {
                                     cond: box try!(self.compile_expr(&es[1], fdc, false)),
                                     on_true: box try!(self.compile_expr(&es[2], fdc, tail)),
-                                    on_false: box NAlloc(MkFixnum(0)),
+                                    on_false: box NLit(LitFixnum(0)),
                                 });
                             } else if tag == "lambda" {
                                 let (frame, mb_lam) = fdc.new_inner(|mut new_chain| {
@@ -270,7 +274,7 @@ impl Context {
                     }
                 }
             }
-            &Int(ref ival) => NAlloc(MkFixnum(*ival as isize)),
+            &Int(ref ival) => NLit(LitFixnum(*ival as isize)),
             &Sym(ref name) => {
                 let name = Id::named(name);
                 let slot = fdc.lookup_slot(&name).cloned().unwrap_or_else(|| Slot::Global(name));
@@ -349,7 +353,7 @@ fn as_prim_o_op(s: &str) -> Option<PrimOpO> {
         "display#" => PrimOpO::Display,
         "panic!#" => PrimOpO::Panic,
         "fixnum?#" => PrimOpO::Fixnump,
-        "eval#" => PrimOpO::Eval,
+        "compile-module#" => PrimOpO::CompileModule,
         _ => return None,
     })
 }

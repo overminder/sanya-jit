@@ -178,6 +178,8 @@ impl GcState {
 
     unsafe fn finish_collection(&mut self,
                                 compiled_infos: &mut Option<&mut Vec<*const ClosureInfo>>) {
+
+        // Remove unreachable infotables.
         if let &mut Some(ref mut compiled_infos) = compiled_infos {
             let mut i = 0;
             while i < compiled_infos.len() {
@@ -194,6 +196,10 @@ impl GcState {
                     }
                 };
                 if shall_remove {
+                    {
+                        let info = compiled_infos.get_mut(i).unwrap();
+                        // XXX: Finalize this infotable.
+                    }
                     compiled_infos.swap_remove(i);
                 } else {
                     i += 1;

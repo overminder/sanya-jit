@@ -59,3 +59,19 @@ pub unsafe extern "C" fn alloc_closure(u: &Universe, info_entry: usize, payloads
     }
     closure.as_oop()
 }
+
+pub unsafe extern "C" fn compile_module(u: &Universe, module: Oop) -> Oop {
+    use ast::sexpr_to_nir;
+    use c0;
+    use std::mem;
+
+    let module = u.oop_handle(module);
+    let sexpr = oop_to_sexpr(module, u);
+    let scs = sexpr_to_nir::compile_sc(&[sexpr]).unwrap();
+    let cm = c0::compile(&scs, u);
+    let mut lm = c0::link(cm, u);
+    let entry = lm.take_closure("entry");
+    // XXX
+    mem::forget(lm);
+    *entry.oop()
+}

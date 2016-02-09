@@ -3,6 +3,7 @@
 
 use super::gc::INFO_FRESH_TAG;
 use super::stackmap::OopStackMapOffsets;
+use ast::id::Id;
 
 use std::slice;
 use std::ptr;
@@ -170,6 +171,10 @@ pub fn infotable_for_fixnum() -> InfoTable<Fixnum> {
     mk_infotable_for_data(0, 1, "<Fixnum>", OopKind::Plain)
 }
 
+pub fn infotable_for_symbol() -> InfoTable<Symbol> {
+    mk_infotable_for_data(0, 1, "<Symbol>", OopKind::Plain)
+}
+
 pub fn infotable_for_ooparray() -> InfoTable<OopArray> {
     mk_infotable_for_data(0, 0, "<OopArray>", OopKind::OopArray)
 }
@@ -181,7 +186,7 @@ pub fn infotable_for_i64array() -> InfoTable<I64Array> {
 // Encodes different kinds of Oops that a InfoTable might points to.
 #[derive(Copy, Clone, Debug)]
 pub enum GcRef {
-    // *(entry + u32) contains an Oop.
+    // *(entry + u32) contains a ptr-sized, i.e. u64, Oop.
     OopConst(u32),
 
     // *(entry + u32) contains an i32 PC-relative offset to another
@@ -261,6 +266,18 @@ pub struct Pair {
     info: *const (),
     pub car: Oop,
     pub cdr: Oop,
+}
+
+#[repr(C)]
+pub struct Symbol {
+    info: *const (),
+    id: Id,
+}
+
+impl Symbol {
+    pub fn as_str(&self) -> &str {
+        self.id.as_str()
+    }
 }
 
 #[repr(C)]
@@ -361,6 +378,7 @@ pub trait IsOop : Sized {
 
 impl IsOop for Closure {}
 impl IsOop for Fixnum {}
+impl IsOop for Symbol {}
 impl IsOop for Pair {}
 impl IsOop for MutBox {}
 impl IsOop for OopArray {}

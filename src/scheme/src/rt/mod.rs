@@ -37,6 +37,7 @@ pub struct Universe {
     // Well-known info tables.
     pub pair_info: InfoTable<Pair>,
     pub fixnum_info: InfoTable<Fixnum>,
+    pub symbol_info: InfoTable<Symbol>,
     pub ooparray_info: InfoTable<OopArray>,
     pub i64array_info: InfoTable<I64Array>,
     pub box_info: InfoTable<MutBox>,
@@ -61,6 +62,7 @@ impl Universe {
 
             pair_info: infotable_for_pair(),
             fixnum_info: infotable_for_fixnum(),
+            symbol_info: infotable_for_symbol(),
             ooparray_info: infotable_for_ooparray(),
             i64array_info: infotable_for_i64array(),
             box_info: infotable_for_box(),
@@ -120,6 +122,10 @@ impl Universe {
 
     pub fn oop_is_fixnum(&self, oop: Oop) -> bool {
         unsafe { Closure::from_raw(oop).info_is(&self.fixnum_info) }
+    }
+
+    pub fn oop_is_symbol(&self, oop: Oop) -> bool {
+        unsafe { Closure::from_raw(oop).info_is(&self.symbol_info) }
     }
 
     pub fn oop_is_ooparray(&self, oop: Oop) -> bool {

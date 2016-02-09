@@ -10,7 +10,7 @@ use self::linking::LinkedModule;
 use rt::Universe;
 use ast::nir::ScDefn;
 
-pub fn compile(scdefns: &mut [ScDefn], u: &Universe) -> CompiledModule {
+pub fn compile(scdefns: &[ScDefn], u: &Universe) -> CompiledModule {
     let mut mc = ModuleCompiler::new();
     for scdefn in scdefns {
         mc.add_sc(scdefn);

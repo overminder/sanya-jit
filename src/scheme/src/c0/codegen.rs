@@ -4,6 +4,7 @@ use ast::nir::*;
 use ast::id::*;
 use ast::nir::RawNode::*;
 use ast::nir::AllocNode::*;
+use ast::nir::LiteralNode::*;
 use rt::*;
 use rt::oop::*;
 use rt::stackmap::*;
@@ -237,10 +238,6 @@ impl<'a> NodeCompiler<'a> {
 
     fn sizeof_alloc(&self, node: &AllocNode) -> CgResult<usize> {
         Ok(match node {
-            &MkFixnum(_) => {
-                // Since it's a constant.
-                0
-            }
             &MkPair(..) => self.universe.pair_info.sizeof_instance(),
             &MkOopArray(..) |
             &MkI64Array(..) => {
@@ -285,15 +282,25 @@ impl<'a> NodeCompiler<'a> {
         })
     }
 
+    fn compile_literal_node(&mut self, node: &LiteralNode, stackmap: StackMap) -> CgResult<()> {
+        match node {
+            &LitFixnum(i) => {
+                self.load_reloc(RAX, Reloc::Fixnum(i as i64));
+            }
+            &LitAny(ref e) => panic!("Not implemented yet: {:?}", e),
+        }
+        Ok(())
+    }
+
     fn compile_alloc_node(&mut self, node: &AllocNode, stackmap: StackMap) -> CgResult<()> {
         match node {
-            &MkFixnum(i) => {
-                self.load_reloc(RAX, Reloc::Fixnum(i as i64));
-                // self.emit_fixnum_allocation(stackmap);
-                // self.emit
-                //    .mov(TMP, i as i64)
-                //    .mov(&(RAX + 8), TMP);
-            }
+            // &MkFixnum(i) => {
+            // self.emit_fixnum_allocation(stackmap);
+            // self.emit
+            // .mov(TMP, i as i64)
+            // .mov(&(RAX + 8), TMP);
+            // }
+            //
             &MkPair(ref car, ref cdr) => {
                 let mut map0 = stackmap;
                 try!(self.compile(cdr, map0));
@@ -421,6 +428,9 @@ impl<'a> NodeCompiler<'a> {
 
     fn compile(&mut self, node: &RawNode, stackmap: StackMap) -> CgResult<()> {
         match node {
+            &NLit(ref lit) => {
+                try!(self.compile_literal_node(lit, stackmap));
+            }
             &NAlloc(ref alloc) => {
                 try!(self.compile_alloc_node(alloc, stackmap));
             }
@@ -659,13 +669,15 @@ impl<'a> NodeCompiler<'a> {
 
                         self.emit.cmove(RAX, TMP);
                     }
-                    PrimOpO::Eval => {
+                    PrimOpO::CompileModule => {
                         self.emit
-                            .mov(RDI, RAX)
-                            .mov(RSI, UNIVERSE_PTR);
+                            .mov(RDI, UNIVERSE_PTR)
+                            .mov(RSI, RAX);
 
-                        // XXX
-                        panic!();
+                        self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
+                            emit.mov(RAX, unsafe { transmute::<_, i64>(compile_module) })
+                                .call(RAX);
+                        });
                     }
                 }
             }

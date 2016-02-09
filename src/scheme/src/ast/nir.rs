@@ -5,6 +5,7 @@
 
 use self::RawNode::*;
 use super::id::*;
+use super::sexpr::SExpr;
 
 use std::ptr;
 use std::boxed::Box;
@@ -192,7 +193,6 @@ impl Default for FrameDescrChain {
 
 #[derive(Debug)]
 pub enum AllocNode {
-    MkFixnum(isize),
     MkPair(Node, Node),
     MkBox(Node),
     MkOopArray(Node /* length */, Node /* fill */),
@@ -201,7 +201,14 @@ pub enum AllocNode {
 }
 
 #[derive(Debug)]
+pub enum LiteralNode {
+    LitFixnum(isize),
+    LitAny(SExpr),
+}
+
+#[derive(Debug)]
 pub enum RawNode {
+    NLit(LiteralNode),
     NAlloc(AllocNode),
 
     // Control flows.
@@ -244,9 +251,9 @@ pub enum RawNode {
 #[derive(Debug, Clone, Copy)]
 pub enum PrimOpO {
     Display,
-    Eval,
     Panic,
     Fixnump,
+    CompileModule,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -342,6 +349,7 @@ impl Traverse for RawNode {
                         try!(n.traverse(t));
                     }
 
+                    &mut NLit(..) |
                     &mut NReadArgument(..) |
                     &mut NReadSlot(..) => {}
                 }
@@ -364,7 +372,6 @@ impl Traverse for AllocNode {
                 try!(n1.traverse(t));
                 n2.traverse(t)
             }
-            &mut MkFixnum(..) |
             &mut MkClosure(..) => Ok(()),
         }
     }
