@@ -287,7 +287,9 @@ impl<'a> NodeCompiler<'a> {
             &LitFixnum(i) => {
                 self.load_reloc(RAX, Reloc::Fixnum(i as i64));
             }
-            &LitAny(ref e) => panic!("Not implemented yet: {:?}", e),
+            &LitAny(ref e) => {
+                self.load_reloc(RAX, Reloc::Any(e.to_owned()));
+            }
         }
         Ok(())
     }
@@ -652,7 +654,8 @@ impl<'a> NodeCompiler<'a> {
                     }
                     PrimOpO::Panic => {
                         self.emit
-                            .mov(RDI, UNIVERSE_PTR);
+                            .mov(RDI, UNIVERSE_PTR)
+                            .mov(RSI, RAX);
                         // Safe to use conv::internal since we don't alloc in display.
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
                             emit.mov(RAX, unsafe { transmute::<_, i64>(panic) })

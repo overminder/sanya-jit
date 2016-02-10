@@ -278,6 +278,10 @@ impl Symbol {
     pub fn as_str(&self) -> &str {
         self.id.as_str()
     }
+
+    pub fn set_value(&mut self, id: Id) {
+        self.id = id;
+    }
 }
 
 #[repr(C)]

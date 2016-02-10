@@ -6,6 +6,7 @@ pub mod gc;
 pub mod inlinesym;
 pub mod stackmap;
 
+use ast::id::Id;
 use self::oop::*;
 use self::gc::{GcState, FullGcArgs};
 use self::stackmap::{NativeInvocationChain, FrameIterator, StackMapTable};
@@ -152,6 +153,14 @@ impl Universe {
     pub fn new_fixnum(&self, value: isize) -> Handle<Fixnum> {
         unsafe {
             let mut res = self.gc_mut().alloc(&self.fixnum_info, &mut self.gcargs());
+            res.set_value(value);
+            res
+        }
+    }
+
+    pub fn new_symbol(&self, value: Id) -> Handle<Symbol> {
+        unsafe {
+            let mut res = self.gc_mut().alloc(&self.symbol_info, &mut self.gcargs());
             res.set_value(value);
             res
         }

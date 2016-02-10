@@ -1,7 +1,6 @@
 use rt::*;
 use rt::oop::*;
 use rt::oop_utils::*;
-use rt::inlinesym::InlineSym;
 
 use std::mem::transmute;
 
@@ -13,9 +12,10 @@ pub unsafe extern "C" fn eval_oop(oop: Oop, u: &Universe) -> Oop {
     panic!("eval_oop")
 }
 
-pub unsafe extern "C" fn panic(universe: &Universe) {
+pub unsafe extern "C" fn panic(universe: &Universe, msg: Oop) {
     // Unwind the stack.
-    println!("Panic, unwinding the stack.");
+    println!("(panic!# {}) called, unwinding the stack.",
+             FmtOop(msg, universe));
     for (frame_no, frame) in universe.iter_frame(universe.smt()).enumerate() {
         println!("Frame {}: {:?}", frame_no, frame);
         for (slot_no, oop_slot) in frame.iter_oop().enumerate() {

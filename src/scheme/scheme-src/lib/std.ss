@@ -3,21 +3,21 @@
     (if (and (fixnum?# a)
              (fixnum?# b))
         (<# a b)
-        (panic!# 0))))
+        (panic!# 'not-a-fixnum))))
 
 (define +
   (lambda (a b)
     (if (and (fixnum?# a)
              (fixnum?# b))
         (+# a b)
-        (panic!# 1))))
+        (panic!# 'not-a-fixnum))))
 
 (define -
   (lambda (a b)
     (if (and (fixnum?# a)
              (fixnum?# b))
         (-# a b)
-        (panic!# 2))))
+        (panic!# 'not-a-fixnum))))
 
 (define display
   (lambda (x)
