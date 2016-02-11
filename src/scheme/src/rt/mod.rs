@@ -113,32 +113,36 @@ impl Universe {
         self as *const _
     }
 
+    pub fn oop_is_ptr(&self, oop: Oop) -> bool {
+        !Singleton::is_singleton(oop)
+    }
+
     pub fn oop_is_pair(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info_is(&self.pair_info) }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info_is(&self.pair_info) }
     }
 
     pub fn oop_is_mutbox(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info_is(&self.box_info) }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info_is(&self.box_info) }
     }
 
     pub fn oop_is_fixnum(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info_is(&self.fixnum_info) }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info_is(&self.fixnum_info) }
     }
 
     pub fn oop_is_symbol(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info_is(&self.symbol_info) }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info_is(&self.symbol_info) }
     }
 
     pub fn oop_is_ooparray(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info_is(&self.ooparray_info) }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info_is(&self.ooparray_info) }
     }
 
     pub fn oop_is_i64array(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info_is(&self.i64array_info) }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info_is(&self.i64array_info) }
     }
 
     pub fn oop_is_closure(&self, oop: Oop) -> bool {
-        unsafe { Closure::from_raw(oop).info().is_closure() }
+        self.oop_is_ptr(oop) && unsafe { Closure::from_raw(oop).info().is_closure() }
     }
 
     pub fn new_pair(&self, car: Oop, cdr: Oop) -> Handle<Pair> {

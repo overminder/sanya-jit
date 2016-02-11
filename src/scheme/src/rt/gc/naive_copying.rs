@@ -135,7 +135,7 @@ impl GcState {
     }
 
     unsafe fn scavenge(&mut self, oop: &mut Oop) {
-        if *oop == NULL_OOP {
+        if !is_heap_ptr(*oop) {
             return;
         }
 
@@ -197,7 +197,7 @@ impl GcState {
                 };
                 if shall_remove {
                     {
-                        let info = compiled_infos.get_mut(i).unwrap();
+                        let _info = compiled_infos.get_mut(i).unwrap();
                         // XXX: Finalize this infotable.
                     }
                     compiled_infos.swap_remove(i);
@@ -326,6 +326,16 @@ impl<'a> FullGcArgs<'a> {
     }
 }
 
+fn is_heap_ptr(oop: Oop) -> bool {
+    if oop == NULL_OOP {
+        false
+    } else if Singleton::is_singleton(oop) {
+        false
+    } else {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,8 +357,8 @@ mod tests {
             let mut i1 = gc.alloc(&fixnum_info, &mut fga);
             let mut i2 = gc.alloc(&fixnum_info, &mut fga);
 
-            i1.value = 999;
-            i2.value = 888;
+            i1.set_value(999);
+            i2.set_value(888);
             p1.car = i1.as_oop();
             p1.cdr = i2.as_oop();
 

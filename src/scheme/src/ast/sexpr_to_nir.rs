@@ -186,7 +186,7 @@ impl Context {
                                 return Ok(NIf {
                                     cond: box try!(self.compile_expr(&es[1], fdc, false)),
                                     on_true: box try!(self.compile_expr(&es[2], fdc, tail)),
-                                    on_false: box NLit(LitFixnum(0)),
+                                    on_false: box NLit(LitAny(Bool(false))),
                                 });
                             } else if tag == "lambda" {
                                 let (frame, mb_lam) = fdc.new_inner(|mut new_chain| {
@@ -274,12 +274,13 @@ impl Context {
                     }
                 }
             }
-            &Int(ref ival) => NLit(LitFixnum(*ival as isize)),
             &Sym(ref name) => {
                 let name = Id::named(name);
                 let slot = fdc.lookup_slot(&name).cloned().unwrap_or_else(|| Slot::Global(name));
                 NReadSlot(slot)
             }
+            &Int(..) | &Bool(..) => NLit(LitAny(e.to_owned())),
+
         })
     }
 
@@ -318,6 +319,7 @@ impl Lambda {
 struct NSeq0(NodeList, RawNode);
 
 impl NSeq0 {
+    #[allow(unused)]
     fn prepend_nodes(mut self, mut ns: NodeList) -> Self {
         ns.extend(self.0.drain(..));
         self.0 = ns;

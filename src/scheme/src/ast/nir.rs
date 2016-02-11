@@ -202,7 +202,6 @@ pub enum AllocNode {
 
 #[derive(Debug)]
 pub enum LiteralNode {
-    LitFixnum(isize),
     LitAny(SExpr),
 }
 

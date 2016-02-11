@@ -8,10 +8,12 @@ pub type ParseResult<A> = Result<A, Error>;
 pub enum Error {
     GotEOF(usize, String),
     NothingParsed,
+    NotASingleton(char),
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum SExpr {
+    Bool(bool),
     Sym(String),
     Int(i64),
     List(Vec<SExpr>),
@@ -47,11 +49,11 @@ pub fn parse_many(xs: &str) -> ParseResult<Vec<SExpr>> {
     while pos < xs.len() {
         let got = parse_at(&xs, &mut pos);
         match got {
-            Err(Error::GotEOF(err_pos, msg)) => {
-                return Err(Error::GotEOF(err_pos, msg));
-            }
             Err(Error::NothingParsed) => {
                 continue;
+            }
+            Err(e) => {
+                return Err(e);
             }
             Ok(got) => {
                 res.push(got);
@@ -71,6 +73,9 @@ fn parse_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
             ';' => {
                 skip_this_line(xs, i);
                 continue;
+            }
+            '#' => {
+                return parse_singleton_at(xs, i);
             }
             _ if x.is_whitespace() => continue,
             _ if x.is_numeric() => {
@@ -152,6 +157,17 @@ fn parse_list_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
         }
     }
     Err(Error::GotEOF(*i, "parsing list, expecting `)`".to_owned()))
+}
+
+fn parse_singleton_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
+    let x = xs[*i];
+    *i += 1;
+
+    Ok(match x {
+        't' => Bool(true),
+        'f' => Bool(false),
+        _ => return Err(Error::NotASingleton(x)),
+    })
 }
 
 pub fn list<A>(xs: &[A]) -> SExpr

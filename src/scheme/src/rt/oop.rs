@@ -24,7 +24,7 @@ pub const OOP_TAG_MASK: usize = (1 << OOP_TAG_SHIFT) - 1;
 #[repr(u8)]
 pub enum OopTag {
     Fixnum = 0x1,
-    Bool = 0x2,
+    Singleton = 0x2,
 }
 
 pub fn sizeof_ptrs(nptrs: usize) -> usize {
@@ -300,23 +300,34 @@ impl MutBox {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub enum Bool {
+pub enum Singleton {
     False = 0,
     True = 1,
+    Nil = 2,
 }
 
-impl Bool {
+impl Singleton {
     pub fn as_oop(self) -> Oop {
-        ((self as usize) << OOP_TAG_SHIFT) + (OopTag::Bool as usize)
+        ((self as usize) << OOP_TAG_SHIFT) + (OopTag::Singleton as usize)
     }
 
-    pub fn from_oop(oop: Oop) -> Self {
-        match oop >> OOP_TAG_SHIFT {
-            0 => Bool::False,
-            1 => Bool::True,
-            _ => panic!("Not a bool: {:#x}", oop),
-        }
+    pub fn from_oop(oop: Oop) -> Option<Self> {
+        Some(match oop >> OOP_TAG_SHIFT {
+            0 => Singleton::False,
+            1 => Singleton::True,
+            2 => Singleton::Nil,
+            _ => return None,
+        })
+    }
+
+    pub fn is_singleton(oop: Oop) -> bool {
+        oop & OOP_TAG_MASK == (OopTag::Singleton as usize)
+    }
+
+    pub fn is_nil(oop: Oop) -> bool {
+        oop == Singleton::Nil.as_oop()
     }
 }
 

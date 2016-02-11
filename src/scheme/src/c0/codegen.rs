@@ -284,9 +284,6 @@ impl<'a> NodeCompiler<'a> {
 
     fn compile_literal_node(&mut self, node: &LiteralNode, stackmap: StackMap) -> CgResult<()> {
         match node {
-            &LitFixnum(i) => {
-                self.load_reloc(RAX, Reloc::Fixnum(i as i64));
-            }
             &LitAny(ref e) => {
                 self.load_reloc(RAX, Reloc::Any(e.to_owned()));
             }
@@ -492,9 +489,9 @@ impl<'a> NodeCompiler<'a> {
                 if !special_case {
                     try!(self.compile(cond, stackmap));
 
+                    self.load_reloc(TMP, Reloc::of_bool(false));
                     self.emit
-                        .mov(RAX, &(RAX + 8))
-                        .cmp(RAX, 0)
+                        .cmp(RAX, TMP)
                         .je(&mut label_false);
                 }
 
@@ -629,8 +626,8 @@ impl<'a> NodeCompiler<'a> {
                     }
                     PrimOpFF::Lt | PrimOpFF::Eq => {
                         self.emit.cmp(RAX, &(TMP + 8));
-                        self.load_reloc(TMP, Reloc::Fixnum(1));
-                        self.load_reloc(RAX, Reloc::Fixnum(0));
+                        self.load_reloc(TMP, Reloc::of_bool(true));
+                        self.load_reloc(RAX, Reloc::of_bool(false));
                         self.emit.cmovcc(op_to_cond(op), RAX, TMP);
                         return Ok(());
                     }
@@ -656,7 +653,8 @@ impl<'a> NodeCompiler<'a> {
                         self.emit
                             .mov(RDI, UNIVERSE_PTR)
                             .mov(RSI, RAX);
-                        // Safe to use conv::internal since we don't alloc in display.
+                        // Need to sync the universe since we will be unwinding
+                        // the generated code's stack.
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
                             emit.mov(RAX, unsafe { transmute::<_, i64>(panic) })
                                 .call(RAX);
@@ -667,8 +665,8 @@ impl<'a> NodeCompiler<'a> {
                             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
                             .cmp(TMP, &Addr::B(RAX));
 
-                        self.load_reloc(TMP, Reloc::Fixnum(1));
-                        self.load_reloc(RAX, Reloc::Fixnum(0));
+                        self.load_reloc(TMP, Reloc::of_bool(true));
+                        self.load_reloc(RAX, Reloc::of_bool(false));
 
                         self.emit.cmove(RAX, TMP);
                     }

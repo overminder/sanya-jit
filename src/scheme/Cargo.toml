@@ -3,6 +3,14 @@ name = "scheme"
 version = "0.1.0"
 authors = ["Overmind JIANG <p90eri@gmail.com>"]
 
+[[bin]]
+name = "scheme"
+path = "src/driver.rs"
+
+[lib]
+name = "scheme"
+path = "src/lib.rs"
+
 [dependencies]
 byteorder = "*"
 env_logger = "*"

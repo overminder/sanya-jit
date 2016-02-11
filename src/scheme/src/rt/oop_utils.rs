@@ -9,6 +9,8 @@ use std::fmt::{self, Formatter, Display};
 unsafe fn fmt_oop(oop: Oop, u: &Universe, fmt: &mut Formatter) -> fmt::Result {
     if oop == NULL_OOP {
         try!(write!(fmt, "<null>"));
+    } else if Singleton::is_singleton(oop) {
+        try!(write!(fmt, "{:?}", Singleton::from_oop(oop).unwrap()));
     } else if u.oop_is_fixnum(oop) {
         let i = Fixnum::from_raw(oop);
         try!(write!(fmt, "{}", i.value()));
@@ -19,14 +21,18 @@ unsafe fn fmt_oop(oop: Oop, u: &Universe, fmt: &mut Formatter) -> fmt::Result {
             p = Pair::from_raw(p.cdr);
             try!(write!(fmt, " {}", FmtOop(p.car, u)));
         }
-        try!(write!(fmt, " . {})", FmtOop(p.cdr, u)));
+        if Singleton::is_nil(p.cdr) {
+            try!(write!(fmt, ")"));
+        } else {
+            try!(write!(fmt, " . {})", FmtOop(p.cdr, u)));
+        }
     } else if u.oop_is_symbol(oop) {
         let s = Symbol::from_raw(oop);
         try!(write!(fmt, "{}", s.as_str()));
     } else if u.oop_is_closure(oop) {
         let clo = Closure::from_raw(oop);
         try!(write!(fmt, "<Closure {} @{:#x}>", clo.info().name(), oop));
-    } else if u.oop_is_mutbox(oop) {
+    } else if u.oop_is_closure(oop) {
         let mb = MutBox::from_raw(oop);
         try!(write!(fmt, "<Box {} @{:#x}>", FmtOop(mb.value(), u), oop));
     } else if u.oop_is_ooparray(oop) {
@@ -63,6 +69,6 @@ impl<'a> Display for FmtOop<'a> {
     }
 }
 
-pub fn oop_to_sexpr(oop: Handle<Closure>, u: &Universe) -> SExpr {
+pub fn oop_to_sexpr(_oop: Handle<Closure>, _u: &Universe) -> SExpr {
     panic!("oop_to_sexpr: not implemenetd")
 }
