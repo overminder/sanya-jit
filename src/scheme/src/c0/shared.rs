@@ -27,6 +27,22 @@ impl Reloc {
         Reloc::Any(SExpr::Bool(b))
     }
 
+    pub fn is_ptr(&self) -> bool {
+        use self::Reloc::*;
+        use ast::sexpr::SExpr::*;
+
+        // XXX: Sync this with the oop defs.
+        match self {
+            &Global(ref name) => true,
+            &Any(ref e) => {
+                match e{
+                    &Bool(..) => false,
+                    _ => true,
+                }
+            }
+        }
+    }
+
     pub unsafe fn reify(&self, globals: &GlobalTable, u: &Universe) -> Oop {
         use self::Reloc::*;
 
