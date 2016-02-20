@@ -35,7 +35,7 @@ impl Reloc {
         match self {
             &Global(ref name) => true,
             &Any(ref e) => {
-                match e{
+                match e {
                     &Bool(..) => false,
                     _ => true,
                 }
@@ -64,7 +64,8 @@ unsafe fn reify_sexpr(e: &SExpr, u: &Universe) -> Oop {
                 Singleton::True
             } else {
                 Singleton::False
-            }.as_oop()
+            }
+            .as_oop()
         }
         &List(ref es) => {
             let res: Handle<Closure> = u.oop_handle(Singleton::Nil.as_oop());
