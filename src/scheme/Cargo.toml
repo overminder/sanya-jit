@@ -13,6 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 byteorder = "*"
+bit-vec = "*"
 env_logger = "*"
 log = "*"
 fnv = "*"

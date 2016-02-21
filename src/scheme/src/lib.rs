@@ -10,6 +10,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate log;
 extern crate fnv;
+extern crate bit_vec;
 
 pub mod ast;
 pub mod rt;

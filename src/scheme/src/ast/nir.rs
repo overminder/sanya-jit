@@ -205,6 +205,20 @@ pub enum LiteralNode {
     LitAny(SExpr),
 }
 
+impl LiteralNode {
+    pub fn as_int(&self) -> Option<i64> {
+        use self::LiteralNode::*;
+        match self {
+            &LitAny(ref e) => {
+                match e {
+                    &SExpr::Int(i) => Some(i),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum RawNode {
     NLit(LiteralNode),
@@ -261,6 +275,13 @@ pub enum PrimOpFF {
     Eq,
     Lt,
     Sub,
+}
+
+pub fn op_is_cond(op: PrimOpFF) -> bool {
+    match op {
+        PrimOpFF::Lt | PrimOpFF::Eq => true,
+        _ => false,
+    }
 }
 
 pub trait NodeTraverser<E> {

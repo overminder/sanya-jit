@@ -1,44 +1,46 @@
 // LIR: Assembly-like IR to ease register allocation.
 
-use assembler::x64::R64;
+use c1::graph::{Graph, NodeIx};
+use assembler::x64::{R64, Cond};
 
 pub enum Lir {
     MovRR(LReg, LReg),
-    AddRR(LReg, LReg),
+    MovRI(LReg, i64),
+    LeaRRR(LReg, LReg, LReg),
+    CmpRR(LReg, LReg),
+}
+
+// Branches.
+pub enum LirB {
+    Jcc(Cond, LBlockId, LBlockId),
+    CallR(LReg),
+    CallL(LBlockId),
+    J(LBlockId),
     Ret,
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct LBlockId(pub usize);
+pub struct LBlockId(NodeIx);
 
 pub struct LBlock {
     id: LBlockId,
-    irs: Vec<Lir>,
+    mids: Vec<Lir>,
+    last: LirB,
 }
 
 pub struct LGraph {
-    blocks: Vec<LBlock>,
-    // Enough for 16 vertices: 32 * 8 = 16 ^ 2.
-    small_matrix: [u8; 32],
+    g: Graph<LBlock>,
 }
 
 impl LGraph {
     pub fn new() -> Self {
         LGraph {
-            blocks: vec![],
-            small_matrix: [0; 32],
+            g: Graph::new(),
         }
-    }
-
-    pub fn add(&mut self, irs: Vec<Lir>, entries: &[LBlockId], exits: &[LBlockId]) -> LBlockId {
-        let bid = self.next_block_id();
-        let b = LBlock {
-            id: bid,
-            irs: irs,
-        };
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum LReg {
     Physical(R64),
     Virtual(u32),

@@ -1,5 +1,6 @@
 use super::shared::{Reloc, RelocTable, InfoRefs};
 use super::compiled_rt::*;
+use super::cgutil::*;
 use ast::nir::*;
 use ast::id::*;
 use ast::nir::RawNode::*;
@@ -770,23 +771,6 @@ impl<'a> NodeCompiler<'a> {
             }
             _ => false,
         })
-    }
-}
-
-// Instruction selection misc.
-
-fn op_is_cond(op: PrimOpFF) -> bool {
-    match op {
-        PrimOpFF::Lt | PrimOpFF::Eq => true,
-        _ => false,
-    }
-}
-
-fn op_to_cond(op: PrimOpFF) -> Cond {
-    match op {
-        PrimOpFF::Lt => Cond::L,
-        PrimOpFF::Eq => Cond::E,
-        _ => panic!("Not a conditional op: {:?}", op),
     }
 }
 

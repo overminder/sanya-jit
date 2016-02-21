@@ -2,3 +2,5 @@
 
 pub mod lsra;
 pub mod lir;
+pub mod graph;
+pub mod lowernir;

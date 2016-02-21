@@ -4,6 +4,7 @@ pub mod codegen;
 pub mod linking;
 mod compiled_rt;
 mod shared;
+pub mod cgutil;
 
 use self::codegen::{ModuleCompiler, CompiledModule};
 use self::linking::LinkedModule;
