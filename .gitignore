@@ -1,3 +1,5 @@
 .*.swp
 src/**/target
 src/**/Cargo.lock
+.DS_store
+.#*

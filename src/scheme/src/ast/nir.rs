@@ -242,6 +242,9 @@ pub enum RawNode {
     NReadSlot(Slot),
     // NReadClosure(usize),
     NBindLocal(Vec<(usize, RawNode)> /* binding */, Node /* cont */),
+
+    // Let's restrict letrec's binders to be lambdas only for now.
+    // This simplifies things quite a bit, as this eliminates anonymous payloads.
     NRecBindLocal(Vec<(usize, AllocNode)> /* recursive binding */, Node /* cont */),
 
     NReadOopArray(Node, Node),
