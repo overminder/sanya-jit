@@ -5,7 +5,6 @@ use self::RegOrOpExt::*;
 use self::Scale::*;
 use self::Addr::*;
 
-#[repr(u8)]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub struct REX(u8);
 

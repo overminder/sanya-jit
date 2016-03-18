@@ -6,6 +6,11 @@ use assembler::mem::JitMem;
 use assembler::emit::{Emit, Label};
 
 use std::mem;
+use std::env;
+
+extern "rust-intrinsic" {
+    fn breakpoint();
+}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -110,7 +115,8 @@ impl Op {
             }
             Call => {
                 emit.movsb(vr.tmpl, &(vr.pc + 1))
-                    .push(&(vr.pc + 2))
+                    .add(vr.pc, 2)
+                    .push(vr.pc)
                     .mov(vr.pc, &(vr.func_table + vr.tmpl * 8));
                 build_dispatch_correct_pc(emit, vr);
             }
@@ -128,7 +134,7 @@ impl Op {
             }
             Add => {
                 emit.pop(vr.tmpr)
-                    .add(&(rsp + 8), vr.tmpr);
+                    .add(&Addr::B(rsp), vr.tmpr);
                 build_dispatch_with_pc_offset(emit, vr, 1);
             }
         }
@@ -161,22 +167,33 @@ fn build_interp() -> (Vec<usize>, JitMem) {
     build_dispatch_correct_pc(&mut emit, &vr);
     let mut offset_table = vec![0; 1 + LAST_OP as u8 as usize];
 
-    for op_ix in 0..LAST_OP as u8 {
+    for op_ix in 0..(1 + LAST_OP as u8) {
         let op = Op::from_u8(op_ix);
         let mut op_lbl = Label::new();
+        //println!("{}: Building dispatch case for {:?}", op_ix, op);
         emit.bind(&mut op_lbl);
+        offset_table[op_ix as usize] = op_lbl.offset().unwrap();
         op.build_dispatch_case(&mut emit, &vr);
-        offset_table.insert(op_ix as usize, op_lbl.offset().unwrap());
     }
 
     let jm = JitMem::new(emit.as_ref());
 
     let entry = jm.as_word();
-    let label_table = offset_table.iter().map(|o| entry + o).collect();
+    let label_table: Vec<usize> = offset_table.iter().map(|o| entry + o).collect();
 
-    println!("jm.entry = {:x}, len = {}", entry, emit.as_ref().len());
-    for line in objdump_disas_lines(emit.as_ref()) {
-        println!("{}", line);
+    if env::var("VERBOSE").is_ok() {
+        for line in objdump_disas_lines(emit.as_ref()) {
+            // Check for opcode offsets.
+            for (op_ix, op_offset) in offset_table.iter().enumerate() {
+                if line.trim().starts_with(&format!("{:x}:", op_offset)) {
+                    println!(";; {:#x} case Op::{:?}:",
+                            label_table[op_ix],
+                            Op::from_u8(op_ix as u8));
+                }
+            }
+            println!("{}", line);
+        }
+        println!("jm.entry = {:#x} ; len = {}", entry, emit.as_ref().len());
     }
 
     (label_table, jm)
@@ -186,19 +203,59 @@ pub fn main() {
     use self::Instr::*;
     use self::Op::*;
 
+    let args: Vec<String> = env::args().collect();
+    let n = args[1].parse().unwrap();
+
     let (labels, jm) = build_interp();
 
     let main_code = instr_to_bs(&[
-        OpWithArg(LoadI8, 20),
-        OpWithArg(LoadI8, 22),
-        OpOnly(Add),
+        OpWithArg(LoadI8, n),
+        OpWithArg(Call, 1),
         OpOnly(Halt),
     ]);
+
+    let id_code = instr_to_bs(&[
+        OpWithArg(LoadL, 1),
+        OpWithArg(Ret, 1),
+    ]);
+
+    let fibo_code = instr_to_bs(&[
+        OpWithArg(LoadL, 1),
+        OpWithArg(LoadI8, 2),
+        OpWithArg(BranchLt, 17),
+
+        // Recur case.
+        OpWithArg(LoadL, 1),
+        OpWithArg(LoadI8, -1),
+        OpOnly(Add),
+        OpWithArg(Call, 1),
+
+        OpWithArg(LoadL, 2),
+        OpWithArg(LoadI8, -2),
+        OpOnly(Add),
+        OpWithArg(Call, 1),
+
+        OpOnly(Add),
+        OpWithArg(Ret, 1),
+
+        // Base case.
+        OpWithArg(LoadL, 1),
+        OpWithArg(Ret, 1),
+    ]);
+
+    let func_table = [
+        id_code.as_ptr(),
+        fibo_code.as_ptr(),
+    ];
 
     let res = unsafe {
         let pc = main_code.as_ptr() as isize;
         let lbl_ptr = labels.as_ptr() as isize;
-        jm.call_ptr6_ptr(pc, lbl_ptr, 0, 0, 0, 0)
+        let func_table_ptr = func_table.as_ptr() as isize;
+        if env::var("BREAK").is_ok() {
+            breakpoint();
+        }
+        jm.call_ptr6_ptr(pc, lbl_ptr, func_table_ptr, 0, 0, 0)
     };
     println!("res = {}", res);
 }

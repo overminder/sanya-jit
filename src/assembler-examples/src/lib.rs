@@ -1,3 +1,5 @@
+#![feature(intrinsics)]
+
 extern crate assembler;
 
 pub mod fibo;
