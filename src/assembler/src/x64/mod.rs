@@ -115,7 +115,7 @@ fn emit_addr_with_opcodes(buf: &mut Emit, mut rex: REX, opcodes: &[u8], reg: Reg
 
     let mb_base = op.base();
     if let Some(base) = mb_base {
-        if base.is_rsp_or_r12() {
+        if base.erased().is_like_sp() {
             // rsp | r12: SIB will be in use.
             mb_sib = Some(SIB::new_b(base));
         }
@@ -137,7 +137,7 @@ fn emit_addr_with_opcodes(buf: &mut Emit, mut rex: REX, opcodes: &[u8], reg: Reg
         }
         mb_disp = Some(disp);
     } else {
-        if mb_base.map(|b| b.is_rbp_or_r13()).unwrap_or(false) {
+        if mb_base.map(|b| b.erased().is_like_bp()).unwrap_or(false) {
             // bp / r13 can't use Mod::Indirect and thus need to use a imm8
             // as the displacment.
             modrm.mod_ = Mod::Indirect8;
@@ -257,17 +257,17 @@ impl EmitArith<R64, i32> for Emit {
 
 impl<'a> EmitArith<R64, &'a Addr> for Emit {
     fn add(&mut self, dst: R64, src: &Addr) -> &mut Self {
-        emit_addr(self, REX::w(), 0x03, RegOrOpExt::Reg(dst), src);
+        emit_addr(self, REX::w(), 0x03, RegOrOpExt::reg(dst), src);
         self
     }
 
     fn sub(&mut self, dst: R64, src: &Addr) -> &mut Self {
-        emit_addr(self, REX::w(), 0x2B, RegOrOpExt::Reg(dst), src);
+        emit_addr(self, REX::w(), 0x2B, RegOrOpExt::reg(dst), src);
         self
     }
 
     fn cmp(&mut self, dst: R64, src: &Addr) -> &mut Self {
-        emit_addr(self, REX::w(), 0x3B, RegOrOpExt::Reg(dst), src);
+        emit_addr(self, REX::w(), 0x3B, RegOrOpExt::reg(dst), src);
         self
     }
 }
@@ -289,22 +289,55 @@ impl EmitMov<R64, i64> for Emit {
 
 impl<'a> EmitMov<R64, &'a Addr> for Emit {
     fn mov(&mut self, dst: R64, src: &Addr) -> &mut Self {
-        emit_addr(self, REX::w(), 0x8B, RegOrOpExt::Reg(dst), src);
+        emit_addr(self, REX::w(), 0x8B, RegOrOpExt::reg(dst), src);
         self
     }
 }
 
 impl<'a> EmitMov<&'a Addr, R64> for Emit {
     fn mov(&mut self, dst: &Addr, src: R64) -> &mut Self {
-        emit_addr(self, REX::w(), 0x89, RegOrOpExt::Reg(src), dst);
+        emit_addr(self, REX::w(), 0x89, RegOrOpExt::reg(src), dst);
         self
     }
 }
 
-impl<'a> EmitMovsx<R64, &'a Addr> for Emit {
-    fn movsxb(&mut self, dst: R64, src: &Addr) -> &mut Self {
-        emit_addr_with_opcodes(self, REX::none(), &[0x0F, 0xBE], RegOrOpExt::Reg(dst), src);
+impl<'a> EmitMov<R32, &'a Addr> for Emit {
+    fn mov(&mut self, dst: R32, src: &Addr) -> &mut Self {
+        emit_addr(self, REX::none(), 0x8B, RegOrOpExt::reg(dst), src);
         self
+    }
+}
+
+// Yeah, pretty much lots of duplicated codes...
+impl<'a> EmitMovx<R64, &'a Addr> for Emit {
+    fn movsb(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr_with_opcodes(self, REX::w(), &[0x0F, 0xBE], RegOrOpExt::reg(dst), src);
+        self
+    }
+
+    fn movsw(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr_with_opcodes(self, REX::w(), &[0x0F, 0xBF], RegOrOpExt::reg(dst), src);
+        self
+    }
+
+    fn movsl(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr_with_opcodes(self, REX::w(), &[0x63], RegOrOpExt::reg(dst), src);
+        self
+    }
+
+    fn movzb(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr_with_opcodes(self, REX::w(), &[0x0F, 0xB6], RegOrOpExt::reg(dst), src);
+        self
+    }
+
+    fn movzw(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr_with_opcodes(self, REX::w(), &[0x0F, 0xB7], RegOrOpExt::reg(dst), src);
+        self
+    }
+
+    fn movzl(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        // `mov r64, rm32` automatically zero-extends.
+        self.mov(dst.to_r32(), src)
     }
 }
 
@@ -318,7 +351,7 @@ impl<'a> EmitLea<R64, &'a mut Label> for Emit {
 
 impl<'a> EmitLea<R64, &'a Addr> for Emit {
     fn lea(&mut self, dst: R64, src: &Addr) -> &mut Self {
-        emit_addr(self, REX::w(), 0x8D, RegOrOpExt::Reg(dst), src);
+        emit_addr(self, REX::w(), 0x8D, RegOrOpExt::reg(dst), src);
         self
     }
 }

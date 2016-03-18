@@ -22,8 +22,14 @@ pub trait EmitMov<Dst, Src> {
     fn mov(&mut self, dst: Dst, src: Src) -> &mut Self;
 }
 
-pub trait EmitMovsx<Dst, Src> {
-    fn movsxb(&mut self, dst: Dst, src: Src) -> &mut Self;
+pub trait EmitMovx<Dst, Src> {
+    fn movsb(&mut self, dst: Dst, src: Src) -> &mut Self;
+    fn movsw(&mut self, dst: Dst, src: Src) -> &mut Self;
+    fn movsl(&mut self, dst: Dst, src: Src) -> &mut Self;
+
+    fn movzb(&mut self, dst: Dst, src: Src) -> &mut Self;
+    fn movzw(&mut self, dst: Dst, src: Src) -> &mut Self;
+    fn movzl(&mut self, dst: Dst, src: Src) -> &mut Self;
 }
 
 pub trait EmitLea<Dst, Src> {

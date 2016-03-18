@@ -66,6 +66,33 @@ impl ATTSyntax for R64 {
     }
 }
 
+impl ATTSyntax for R32 {
+    fn as_att_syntax(&self) -> String {
+        use super::R32::*;
+        match *self {
+            eax => "%eax",
+            ecx => "%ecx",
+            edx => "%edx",
+            ebx => "%ebx",
+
+            esp => "%esp",
+            ebp => "%ebp",
+            esi => "%esi",
+            edi => "%edi",
+
+            r8d => "%r8d",
+            r9d => "%r9d",
+            r10d => "%r10d",
+            r11d => "%r11d",
+            r12d => "%r12d",
+            r13d => "%r13d",
+            r14d => "%r14d",
+            r15d => "%r15d",
+        }
+        .to_owned()
+    }
+}
+
 impl Enumerate for i32 {
     fn possible_enumerations() -> Vec<Self> {
         vec![0, 1, 127, 255, 0x7fffffff, -0x7fffffff, -127, -1]
@@ -198,7 +225,7 @@ impl ATTSyntax for Addr {
 
         let mb_disp = if let Some(disp) = self.disp() {
             Some(disp)
-        } else if self.base().map_or(false, |b| b.is_rbp_or_r13()) {
+        } else if self.base().map_or(false, |b| b.erased().is_like_bp()) {
             Some(0)
         } else if self.is_index_scale() {
             Some(0)
@@ -234,7 +261,7 @@ impl ATTSyntax for Addr {
 enum Push {
     R64(R64),
     I32(i32),
-    M64(Addr),
+    M(Addr),
 }
 
 impl ATTSyntax for Push {
@@ -246,7 +273,7 @@ impl ATTSyntax for Push {
                 rator = "pushq";
                 i.as_att_syntax()
             }
-            &Push::M64(ref m) => {
+            &Push::M(ref m) => {
                 rator = "pushq";
                 m.as_att_syntax()
             }
@@ -261,7 +288,7 @@ impl Instr for Push {
         match self {
             &Push::R64(r) => buf.push(r),
             &Push::I32(i) => buf.push(i),
-            &Push::M64(ref m) => buf.push(m),
+            &Push::M(ref m) => buf.push(m),
         };
     }
 }
@@ -270,7 +297,7 @@ impl Enumerate for Push {
     fn possible_enumerations() -> Vec<Self> {
         let r64s = R64::possible_enumerations().into_iter().map(|r| Push::R64(r));
         let i32s = i32::possible_enumerations().into_iter().map(|i| Push::I32(i));
-        let m64s = Addr::possible_enumerations().into_iter().map(|a| Push::M64(a));
+        let m64s = Addr::possible_enumerations().into_iter().map(|a| Push::M(a));
         r64s.chain(i32s).chain(m64s).collect()
     }
 }
@@ -279,14 +306,14 @@ impl Enumerate for Push {
 
 enum Pop {
     R64(R64),
-    M64(Addr),
+    M(Addr),
 }
 
 impl Instr for Pop {
     fn emit(&self, buf: &mut Emit) {
         match self {
             &Pop::R64(r) => buf.pop(r),
-            &Pop::M64(ref m) => buf.pop(m),
+            &Pop::M(ref m) => buf.pop(m),
         };
     }
 }
@@ -296,7 +323,7 @@ impl Enumerate for Pop {
         R64::possible_enumerations()
             .into_iter()
             .map(|r| Pop::R64(r))
-            .chain(Addr::possible_enumerations().into_iter().map(|m| Pop::M64(m)))
+            .chain(Addr::possible_enumerations().into_iter().map(|m| Pop::M(m)))
             .collect()
     }
 }
@@ -306,7 +333,7 @@ impl ATTSyntax for Pop {
         let mut rator = "pop";
         let rand = match self {
             &Pop::R64(r) => r.as_att_syntax(),
-            &Pop::M64(ref m) => {
+            &Pop::M(ref m) => {
                 rator = "popq";
                 m.as_att_syntax()
             }
@@ -327,9 +354,9 @@ enum Arith {
     SubR64I32(R64, i32),
     CmpR64I32(R64, i32),
 
-    AddR64M64(R64, Addr),
-    SubR64M64(R64, Addr),
-    CmpR64M64(R64, Addr),
+    AddR64M(R64, Addr),
+    SubR64M(R64, Addr),
+    CmpR64M(R64, Addr),
 }
 
 impl Instr for Arith {
@@ -345,9 +372,9 @@ impl Instr for Arith {
             &SubR64I32(dst, src) => buf.sub(dst, src),
             &CmpR64I32(dst, src) => buf.cmp(dst, src),
 
-            &AddR64M64(dst, ref src) => buf.add(dst, src),
-            &SubR64M64(dst, ref src) => buf.sub(dst, src),
-            &CmpR64M64(dst, ref src) => buf.cmp(dst, src),
+            &AddR64M(dst, ref src) => buf.add(dst, src),
+            &SubR64M(dst, ref src) => buf.sub(dst, src),
+            &CmpR64M(dst, ref src) => buf.cmp(dst, src),
         };
     }
 }
@@ -369,9 +396,9 @@ impl Enumerate for Arith {
                 res.push(CmpR64I32(*dst, *src));
             }
             for src in &Addr::possible_enumerations() {
-                res.push(AddR64M64(*dst, src.clone()));
-                res.push(SubR64M64(*dst, src.clone()));
-                res.push(CmpR64M64(*dst, src.clone()));
+                res.push(AddR64M(*dst, src.clone()));
+                res.push(SubR64M(*dst, src.clone()));
+                res.push(CmpR64M(*dst, src.clone()));
             }
         }
         res
@@ -394,13 +421,13 @@ impl Arith {
         match self {
             &AddR64R64(_, _) |
             &AddR64I32(_, _) |
-            &AddR64M64(_, _) => "add",
+            &AddR64M(_, _) => "add",
             &SubR64R64(_, _) |
             &SubR64I32(_, _) |
-            &SubR64M64(_, _) => "sub",
+            &SubR64M(_, _) => "sub",
             &CmpR64R64(_, _) |
             &CmpR64I32(_, _) |
-            &CmpR64M64(_, _) => "cmp",
+            &CmpR64M(_, _) => "cmp",
         }
         .to_owned()
     }
@@ -416,9 +443,9 @@ impl Arith {
             &SubR64I32(_, i) |
             &CmpR64I32(_, i) => i.as_att_syntax(),
 
-            &AddR64M64(_, ref m) |
-            &SubR64M64(_, ref m) |
-            &CmpR64M64(_, ref m) => m.as_att_syntax(),
+            &AddR64M(_, ref m) |
+            &SubR64M(_, ref m) |
+            &CmpR64M(_, ref m) => m.as_att_syntax(),
         }
     }
 
@@ -427,13 +454,13 @@ impl Arith {
         match self {
             &AddR64R64(r, _) |
             &AddR64I32(r, _) |
-            &AddR64M64(r, _) |
+            &AddR64M(r, _) |
             &SubR64R64(r, _) |
             &SubR64I32(r, _) |
-            &SubR64M64(r, _) |
+            &SubR64M(r, _) |
             &CmpR64R64(r, _) |
             &CmpR64I32(r, _) |
-            &CmpR64M64(r, _) => r.as_att_syntax(),
+            &CmpR64M(r, _) => r.as_att_syntax(),
         }
     }
 }
@@ -443,8 +470,9 @@ impl Arith {
 enum Mov {
     R64R64(R64, R64),
     R64I64(R64, i64),
-    R64M64(R64, Addr),
-    M64R64(Addr, R64),
+    R64M(R64, Addr),
+    R32M(R32, Addr),
+    MR64(Addr, R64),
 }
 
 impl Instr for Mov {
@@ -454,8 +482,9 @@ impl Instr for Mov {
         match self {
             &R64R64(dst, src) => buf.mov(dst, src),
             &R64I64(dst, src) => buf.mov(dst, src),
-            &R64M64(dst, ref src) => buf.mov(dst, src),
-            &M64R64(ref dst, src) => buf.mov(dst, src),
+            &R64M(dst, ref src) => buf.mov(dst, src),
+            &R32M(dst, ref src) => buf.mov(dst, src),
+            &MR64(ref dst, src) => buf.mov(dst, src),
         };
     }
 }
@@ -473,8 +502,9 @@ impl Enumerate for Mov {
                 res.push(R64I64(*r, src));
             }
             for m in Addr::possible_enumerations() {
-                res.push(R64M64(*r, m.clone()));
-                res.push(M64R64(m, *r));
+                res.push(R32M(r.to_r32(), m.clone()));
+                res.push(R64M(*r, m.clone()));
+                res.push(MR64(m, *r));
             }
         }
         res
@@ -495,10 +525,13 @@ impl ATTSyntax for Mov {
                 rator = "movabs";
                 rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
             }
-            &R64M64(dst, ref src) => {
+            &R64M(dst, ref src) => {
                 rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
             }
-            &M64R64(ref dst, src) => {
+            &R32M(dst, ref src) => {
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &MR64(ref dst, src) => {
                 rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
             }
         };
@@ -510,43 +543,78 @@ impl ATTSyntax for Mov {
 // Movsx
 
 #[allow(non_camel_case_types)]
-enum Movsx {
-    B_R64M64(R64, Addr),
+enum Movx {
+    SBQ_RM(R64, Addr),
+    SWQ_RM(R64, Addr),
+    SLQ_RM(R64, Addr),
+    ZBQ_RM(R64, Addr),
+    ZWQ_RM(R64, Addr),
+    ZLQ_RM(R64, Addr),
 }
 
-impl Instr for Movsx {
+impl Instr for Movx {
     fn emit(&self, buf: &mut Emit) {
-        use self::Movsx::*;
+        use self::Movx::*;
 
         match self {
-            &B_R64M64(dst, ref src) => buf.movsxb(dst, src),
+            &SBQ_RM(dst, ref src) => buf.movsb(dst, src),
+            &SWQ_RM(dst, ref src) => buf.movsw(dst, src),
+            &SLQ_RM(dst, ref src) => buf.movsl(dst, src),
+            &ZBQ_RM(dst, ref src) => buf.movzb(dst, src),
+            &ZWQ_RM(dst, ref src) => buf.movzw(dst, src),
+            &ZLQ_RM(dst, ref src) => buf.movzl(dst, src),
         };
     }
 }
 
-impl Enumerate for Movsx {
+impl Enumerate for Movx {
     fn possible_enumerations() -> Vec<Self> {
-        use self::Movsx::*;
+        use self::Movx::*;
 
         let mut res = vec![];
         for r in &R64::possible_enumerations() {
             for m in Addr::possible_enumerations() {
-                res.push(B_R64M64(*r, m.clone()));
+                res.push(SBQ_RM(*r, m.clone()));
+                res.push(SWQ_RM(*r, m.clone()));
+                res.push(SLQ_RM(*r, m.clone()));
+                res.push(ZBQ_RM(*r, m.clone()));
+                res.push(ZWQ_RM(*r, m.clone()));
+                res.push(ZLQ_RM(*r, m.clone()));
             }
         }
         res
     }
 }
 
-impl ATTSyntax for Movsx {
+impl ATTSyntax for Movx {
     fn as_att_syntax(&self) -> String {
-        use self::Movsx::*;
-        let rator = "movsbw";
+        use self::Movx::*;
+        let rator;
         let rand;
 
         match self {
-            &B_R64M64(dst, ref src) => {
+            &SBQ_RM(dst, ref src) => {
+                rator = "movsbq";
                 rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &SWQ_RM(dst, ref src) => {
+                rator = "movswq";
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &SLQ_RM(dst, ref src) => {
+                rator = "movslq";
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &ZBQ_RM(dst, ref src) => {
+                rator = "movzbq";
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &ZWQ_RM(dst, ref src) => {
+                rator = "movzwq";
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+            &ZLQ_RM(dst, ref src) => {
+                return Mov::R32M(dst.to_r32(), src.clone()).as_att_syntax()
             }
         };
 
@@ -557,7 +625,7 @@ impl ATTSyntax for Movsx {
 // Lea.
 
 enum Lea {
-    R64M64(R64, Addr),
+    R64M(R64, Addr),
 }
 
 impl Instr for Lea {
@@ -565,7 +633,7 @@ impl Instr for Lea {
         use self::Lea::*;
 
         match self {
-            &R64M64(dst, ref src) => buf.lea(dst, src),
+            &R64M(dst, ref src) => buf.lea(dst, src),
         };
     }
 }
@@ -577,7 +645,7 @@ impl Enumerate for Lea {
         let mut res = vec![];
         for r in &R64::possible_enumerations() {
             for m in Addr::possible_enumerations() {
-                res.push(R64M64(*r, m));
+                res.push(R64M(*r, m));
             }
         }
         res
@@ -591,7 +659,7 @@ impl ATTSyntax for Lea {
         let rand;
 
         match self {
-            &R64M64(dst, ref src) => {
+            &R64M(dst, ref src) => {
                 rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
             }
         };
@@ -627,8 +695,8 @@ impl ATTSyntax for Ret {
 enum Branch {
     JmpR64(R64),
     CallR64(R64),
-    JmpM64(Addr),
-    CallM64(Addr),
+    JmpM(Addr),
+    CallM(Addr),
 }
 
 impl Instr for Branch {
@@ -642,10 +710,10 @@ impl Instr for Branch {
             &CallR64(r) => {
                 buf.call(r);
             }
-            &JmpM64(ref m) => {
+            &JmpM(ref m) => {
                 buf.jmp(m);
             }
-            &CallM64(ref m) => {
+            &CallM(ref m) => {
                 buf.call(m);
             }
         }
@@ -662,8 +730,8 @@ impl Enumerate for Branch {
             res.push(CallR64(*r));
         }
         for m in Addr::possible_enumerations() {
-            res.push(JmpM64(m.clone()));
-            res.push(CallM64(m));
+            res.push(JmpM(m.clone()));
+            res.push(CallM(m));
         }
         res
     }
@@ -685,11 +753,11 @@ impl ATTSyntax for Branch {
                 rator = "callq";
                 rand = r.as_att_syntax();
             }
-            &JmpM64(ref m) => {
+            &JmpM(ref m) => {
                 rator = "jmpq";
                 rand = m.as_att_syntax();
             }
-            &CallM64(ref m) => {
+            &CallM(ref m) => {
                 rator = "callq";
                 rand = m.as_att_syntax();
             }
@@ -883,8 +951,8 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
 // Tests.
 
 #[test]
-fn test_movsx_matches_disassembly() {
-    assert_assembly_matches_disassembly::<Movsx>();
+fn test_movx_matches_disassembly() {
+    assert_assembly_matches_disassembly::<Movx>();
 }
 
 #[test]

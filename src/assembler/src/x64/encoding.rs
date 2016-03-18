@@ -1,4 +1,4 @@
-use super::consts::R64;
+use super::consts::{R64, ErasedReg};
 use super::consts::R64::*;
 use self::Mod::*;
 use self::RegOrOpExt::*;
@@ -94,11 +94,15 @@ impl Mod {
 
 #[derive(Copy, Clone)]
 pub enum RegOrOpExt {
-    Reg(R64),
+    Reg(ErasedReg),
     OpExt(u8),
 }
 
 impl RegOrOpExt {
+    pub fn reg<R>(r: R) -> Self where ErasedReg: From<R> {
+        RegOrOpExt::Reg(ErasedReg::from(r))
+    }
+
     pub fn lower_part(&self) -> u8 {
         match self {
             &Reg(r) => r.lower_part(),
@@ -131,7 +135,7 @@ impl ModRM {
     }
 
     pub fn direct(reg: R64, rm: R64) -> Self {
-        ModRM::new(Direct, Reg(reg), rm)
+        ModRM::new(Direct, RegOrOpExt::reg(reg), rm)
     }
 
     pub fn direct_opext(opext: u8, rm: R64) -> Self {
