@@ -16,6 +16,7 @@ use emit::*;
 // Test traits.
 
 // XXX: Consider switching to quickcheck when we have time.
+// Really...
 trait Enumerate : Sized {
     fn possible_enumerations() -> Vec<Self>;
 }
@@ -506,6 +507,53 @@ impl ATTSyntax for Mov {
     }
 }
 
+// Movsx
+
+#[allow(non_camel_case_types)]
+enum Movsx {
+    B_R64M64(R64, Addr),
+}
+
+impl Instr for Movsx {
+    fn emit(&self, buf: &mut Emit) {
+        use self::Movsx::*;
+
+        match self {
+            &B_R64M64(dst, ref src) => buf.movsxb(dst, src),
+        };
+    }
+}
+
+impl Enumerate for Movsx {
+    fn possible_enumerations() -> Vec<Self> {
+        use self::Movsx::*;
+
+        let mut res = vec![];
+        for r in &R64::possible_enumerations() {
+            for m in Addr::possible_enumerations() {
+                res.push(B_R64M64(*r, m.clone()));
+            }
+        }
+        res
+    }
+}
+
+impl ATTSyntax for Movsx {
+    fn as_att_syntax(&self) -> String {
+        use self::Movsx::*;
+        let rator = "movsbw";
+        let rand;
+
+        match self {
+            &B_R64M64(dst, ref src) => {
+                rand = format!("{},{}", src.as_att_syntax(), dst.as_att_syntax());
+            }
+        };
+
+        format!("{:7}{}", rator, rand)
+    }
+}
+
 // Lea.
 
 enum Lea {
@@ -835,6 +883,11 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
 // Tests.
 
 #[test]
+fn test_movsx_matches_disassembly() {
+    assert_assembly_matches_disassembly::<Movsx>();
+}
+
+#[test]
 fn test_assembly_matches_disassembly() {
     assert_assembly_matches_disassembly::<Cmovcc>();
     assert_assembly_matches_disassembly::<Push>();
@@ -925,7 +978,7 @@ fn test_fibo() {
     let mut emit = Emit::new();
     make_fibo_code(&mut emit);
     let jitmem = JitMem::new(emit.as_ref());
-    println!("Start = 0x{:x}", unsafe { jitmem.start() });
+    println!("Start = 0x{:x}", jitmem.start());
     let res = unsafe { jitmem.call_ptr_ptr(10) };
     assert_eq!(55, res);
 }

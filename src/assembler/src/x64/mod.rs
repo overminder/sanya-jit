@@ -108,8 +108,7 @@ fn emit_rm64_opext(buf: &mut Emit, rex: REX, opcode: u8, opext: u8, rm: R64) {
 }
 
 // XXX: Refactor this. It's a mess and it's too slow.
-fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Addr) {
-
+fn emit_addr_with_opcodes(buf: &mut Emit, mut rex: REX, opcodes: &[u8], reg: RegOrOpExt, op: &Addr) {
     let mut modrm;
     let mut mb_sib = None;
     let mut mb_disp = None;
@@ -163,7 +162,9 @@ fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Add
     rex = rex.with_modrm(modrm);
     mb_sib.map(|sib| rex = rex.with_sib(sib));
     rex.emit(buf);
-    buf.write_byte(opcode);
+    for opcode in opcodes {
+        buf.write_byte(*opcode);
+    }
     buf.write_byte(modrm.encoding());
     mb_sib.map(|sib| buf.write_byte(sib.encoding()));
     if modrm.mod_ == Mod::Indirect8 {
@@ -173,6 +174,10 @@ fn emit_addr(buf: &mut Emit, mut rex: REX, opcode: u8, reg: RegOrOpExt, op: &Add
     } else {
         assert_eq!(Mod::Indirect, modrm.mod_);
     }
+}
+
+fn emit_addr(buf: &mut Emit, rex: REX, opcode: u8, reg: RegOrOpExt, op: &Addr) {
+    emit_addr_with_opcodes(buf, rex, &[opcode], reg, op)
 }
 
 // Code emission.
@@ -292,6 +297,13 @@ impl<'a> EmitMov<R64, &'a Addr> for Emit {
 impl<'a> EmitMov<&'a Addr, R64> for Emit {
     fn mov(&mut self, dst: &Addr, src: R64) -> &mut Self {
         emit_addr(self, REX::w(), 0x89, RegOrOpExt::Reg(src), dst);
+        self
+    }
+}
+
+impl<'a> EmitMovsx<R64, &'a Addr> for Emit {
+    fn movsxb(&mut self, dst: R64, src: &Addr) -> &mut Self {
+        emit_addr_with_opcodes(self, REX::none(), &[0x0F, 0xBE], RegOrOpExt::Reg(dst), src);
         self
     }
 }

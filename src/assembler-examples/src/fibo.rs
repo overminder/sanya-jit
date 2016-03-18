@@ -1,5 +1,3 @@
-extern crate assembler;
-
 use assembler::x64::R64::*;
 use assembler::x64::traits::*;
 use assembler::mem::JitMem;

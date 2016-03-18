@@ -1,5 +1,4 @@
-extern crate assembler;
-
+use assembler::x64::R64;
 use assembler::x64::R64::*;
 use assembler::x64::traits::*;
 use assembler::mem::JitMem;
@@ -42,10 +41,11 @@ impl Op {
                 build_dispatch_skip_oparg(emit, vr);
             }
             BranchLt => {
+                let mut lt = Label::new();
                 emit.pop(vr.tmpr)
                     .pop(vr.tmpl)
                     .cmp(vr.tmpl, vr.tmpr)
-                    .jl(&mut lt)
+                    .jl(&mut lt);
                 build_dispatch_skip_oparg(emit, vr);
                 emit.bind(&mut lt)
                     .movsxb(vr.tmpl, &(vr.pc + 1))
@@ -56,8 +56,11 @@ impl Op {
     }
 }
 
-fn build_op(emit: &mut Emit, op: Op) -> Label {
-    match op
+fn build_dispatch_skip_oparg(emit: &mut Emit, vr: &VMRegs) {
+    emit.movsxb(vr.tmpl, &(vr.pc + 2))
+        .add(vr.pc, 2)
+        .mov(vr.tmpl, &(vr.dispatch_table + vr.tmpl * 8))
+        .jmp(vr.tmpl);
 }
 
 fn build_interp() -> (Vec<usize>, JitMem) {
