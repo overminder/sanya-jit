@@ -1,9 +1,9 @@
 use assembler::x64::{Addr, R64};
 use assembler::x64::R64::*;
 use assembler::x64::traits::*;
-use assembler::x64::utils::objdump_disas_lines;
-use assembler::mem::JitMem;
 use assembler::emit::{Emit, Label};
+
+use template_interp::shared::{Dispatchable, build_interp};
 
 use std::mem;
 use std::env;
@@ -82,12 +82,46 @@ impl VMRegs {
     }
 }
 
+struct Opts {
+    duplicate_branch_op_tails: bool,
+}
+
+impl Opts {
+    fn new() -> Self {
+        Opts {
+            duplicate_branch_op_tails: true,
+        }
+    }
+}
+
+impl From<u8> for Op {
+    fn from(repr: u8) -> Self {
+        Op::from_u8(repr)
+    }
+}
+
+impl From<Op> for u8 {
+    fn from(repr: Op) -> Self {
+        repr as u8
+    }
+}
+
+impl Dispatchable<(VMRegs, Opts)> for Op {
+    fn build_dispatch_case(self, emit: &mut Emit, args: &(VMRegs, Opts)) {
+        Op::build_dispatch_case(self, emit, &args.0, &args.1);
+    }
+
+    fn build_dispatch_with_pc_offset(emit: &mut Emit, args: &(VMRegs, Opts), offset: i32) {
+        Op::build_dispatch_with_pc_offset(emit, &args.0, offset);
+    }
+}
+
 impl Op {
     fn from_u8(repr: u8) -> Self {
         unsafe { mem::transmute(repr) }
     }
 
-    fn build_dispatch_case(self, emit: &mut Emit, vr: &VMRegs) {
+    fn build_dispatch_case(self, emit: &mut Emit, vr: &VMRegs, opts: &Opts) {
         use self::Op::*;
 
         match self {
@@ -102,16 +136,26 @@ impl Op {
                 build_dispatch_skip_oparg(emit, vr);
             }
             BranchLt => {
-                let mut lt = Label::new();
                 emit.pop(vr.tmpr)
                     .pop(vr.tmpl)
-                    .cmp(vr.tmpl, vr.tmpr)
-                    .jl(&mut lt);
-                build_dispatch_skip_oparg(emit, vr);
-                emit.bind(&mut lt)
-                    .movsb(vr.tmpl, &(vr.pc + 1))
-                    .add(vr.pc, vr.tmpl);
-                build_dispatch_skip_oparg(emit, vr);
+                    .cmp(vr.tmpl, vr.tmpr);
+
+                if opts.duplicate_branch_op_tails {
+                    let mut lt = Label::new();
+                    emit.jl(&mut lt);
+                    build_dispatch_skip_oparg(emit, vr);
+                    emit.bind(&mut lt)
+                        .movsb(vr.tmpl, &(vr.pc + 1))
+                        .add(vr.pc, vr.tmpl);
+                    build_dispatch_skip_oparg(emit, vr);
+                } else {
+                    let mut ge = Label::new();
+                    emit.jge(&mut ge)
+                        .movsb(vr.tmpl, &(vr.pc + 1))
+                        .add(vr.pc, vr.tmpl)
+                        .bind(&mut ge);
+                    build_dispatch_skip_oparg(emit, vr);
+                }
             }
             Call => {
                 emit.movsb(vr.tmpl, &(vr.pc + 1))
@@ -135,69 +179,32 @@ impl Op {
             Add => {
                 emit.pop(vr.tmpr)
                     .add(&Addr::B(rsp), vr.tmpr);
-                build_dispatch_with_pc_offset(emit, vr, 1);
+                Op::build_dispatch_with_pc_offset(emit, vr, 1);
             }
         }
     }
-}
 
-fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, offset: i32) {
-    if offset == 0 {
-        emit.movsb(vr.tmpl, &Addr::B(vr.pc));
-    } else {
-        emit.movsb(vr.tmpl, &(vr.pc + offset))
-            .add(vr.pc, offset);
+    fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, offset: i32) {
+        if offset == 0 {
+            emit.movsb(vr.tmpl, &Addr::B(vr.pc));
+        } else {
+            emit.movsb(vr.tmpl, &(vr.pc + offset))
+                .add(vr.pc, offset);
+        }
+
+        emit.jmp(&(vr.dispatch_table + vr.tmpl * 8));
     }
-
-    emit.jmp(&(vr.dispatch_table + vr.tmpl * 8));
 }
+
 
 fn build_dispatch_skip_oparg(emit: &mut Emit, vr: &VMRegs) {
-    build_dispatch_with_pc_offset(emit, vr, 2)
+    Op::build_dispatch_with_pc_offset(emit, vr, 2)
 }
 
 fn build_dispatch_correct_pc(emit: &mut Emit, vr: &VMRegs) {
-    build_dispatch_with_pc_offset(emit, vr, 0)
+    Op::build_dispatch_with_pc_offset(emit, vr, 0)
 }
 
-fn build_interp() -> (Vec<usize>, JitMem) {
-    let mut emit = Emit::new();
-    let vr = VMRegs::new();
-
-    build_dispatch_correct_pc(&mut emit, &vr);
-    let mut offset_table = vec![0; 1 + LAST_OP as u8 as usize];
-
-    for op_ix in 0..(1 + LAST_OP as u8) {
-        let op = Op::from_u8(op_ix);
-        let mut op_lbl = Label::new();
-        //println!("{}: Building dispatch case for {:?}", op_ix, op);
-        emit.bind(&mut op_lbl);
-        offset_table[op_ix as usize] = op_lbl.offset().unwrap();
-        op.build_dispatch_case(&mut emit, &vr);
-    }
-
-    let jm = JitMem::new(emit.as_ref());
-
-    let entry = jm.as_word();
-    let label_table: Vec<usize> = offset_table.iter().map(|o| entry + o).collect();
-
-    if env::var("VERBOSE").is_ok() {
-        for line in objdump_disas_lines(emit.as_ref()) {
-            // Check for opcode offsets.
-            for (op_ix, op_offset) in offset_table.iter().enumerate() {
-                if line.trim().starts_with(&format!("{:x}:", op_offset)) {
-                    println!(";; {:#x} case Op::{:?}:",
-                            label_table[op_ix],
-                            Op::from_u8(op_ix as u8));
-                }
-            }
-            println!("{}", line);
-        }
-        println!("jm.entry = {:#x} ; len = {}", entry, emit.as_ref().len());
-    }
-
-    (label_table, jm)
-}
 
 pub fn main() {
     use self::Instr::*;
@@ -206,7 +213,12 @@ pub fn main() {
     let args: Vec<String> = env::args().collect();
     let n = args[1].parse().unwrap();
 
-    let (labels, jm) = build_interp();
+    let mut opts = Opts::new();
+    if env::var("NO_DUP_BR_TAILS").is_ok() {
+        opts.duplicate_branch_op_tails = false;
+    };
+
+    let (labels, jm) = build_interp(LAST_OP, &(VMRegs::new(), opts));
 
     let main_code = instr_to_bs(&[
         OpWithArg(LoadI8, n),

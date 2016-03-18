@@ -17,6 +17,7 @@ use self::encoding::Addr::*;
 
 use std::ops::{Add, Mul};
 
+// XXX: Use real multi-byte nop sequences.
 pub fn emit_nop_until_aligned(emit: &mut Emit, alignment: usize) -> usize {
     let here = emit.here();
     let mask = alignment - 1;
