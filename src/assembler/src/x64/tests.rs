@@ -34,8 +34,8 @@ trait Instr: ATTSyntax {
 impl Enumerate for R64 {
     fn possible_enumerations() -> Vec<Self> {
         use super::R64::*;
-        vec![RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI,
-             R8, R9, R10, R11, R12, R13, R14, R15,]
+        vec![rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi,
+             r8, r9, r10, r11, r12, r13, r14, r15,]
     }
 }
 
@@ -43,24 +43,24 @@ impl ATTSyntax for R64 {
     fn as_att_syntax(&self) -> String {
         use super::R64::*;
         match *self {
-            RAX => "%rax",
-            RCX => "%rcx",
-            RDX => "%rdx",
-            RBX => "%rbx",
+            rax => "%rax",
+            rcx => "%rcx",
+            rdx => "%rdx",
+            rbx => "%rbx",
 
-            RSP => "%rsp",
-            RBP => "%rbp",
-            RSI => "%rsi",
-            RDI => "%rdi",
+            rsp => "%rsp",
+            rbp => "%rbp",
+            rsi => "%rsi",
+            rdi => "%rdi",
 
-            R8 => "%r8",
-            R9 => "%r9",
-            R10 => "%r10",
-            R11 => "%r11",
-            R12 => "%r12",
-            R13 => "%r13",
-            R14 => "%r14",
-            R15 => "%r15",
+            r8 => "%r8",
+            r9 => "%r9",
+            r10 => "%r10",
+            r11 => "%r11",
+            r12 => "%r12",
+            r13 => "%r13",
+            r14 => "%r14",
+            r15 => "%r15",
         }
         .to_owned()
     }
@@ -121,7 +121,7 @@ impl Enumerate for Addr {
                 bds.push(Addr::BD(b, d));
             }
             for i in R64::possible_enumerations() {
-                if i == R64::RSP {
+                if i == R64::rsp {
                     // %sp is not a valid index register.
                     continue;
                 }
@@ -134,7 +134,7 @@ impl Enumerate for Addr {
                 }
             }
             for s in Scale::possible_enumerations() {
-                if b == R64::RSP {
+                if b == R64::rsp {
                     continue;
                 }
                 iss.push(Addr::IS(b, s));
@@ -904,8 +904,8 @@ fn test_assembly_matches_disassembly() {
 fn test_jit_pushpop() {
     use mem::JitMem;
     let mut emit = Emit::new();
-    emit.push(R64::RDI)
-        .pop(R64::RAX)
+    emit.push(R64::rdi)
+        .pop(R64::rax)
         .ret();
     let jitmem = JitMem::new(emit.as_ref());
     let arg = 12345;
@@ -918,9 +918,9 @@ fn test_jit_add() {
     use mem::JitMem;
     let mut emit = Emit::new();
     emit.push(0_i32)
-        .pop(R64::RAX)
-        .add(R64::RAX, R64::R8)
-        .add(R64::RAX, R64::R9)
+        .pop(R64::rax)
+        .add(R64::rax, R64::r8)
+        .add(R64::rax, R64::r9)
         .ret();
     let jitmem = JitMem::new(emit.as_ref());
     let res = unsafe { jitmem.call_ptr6_ptr(0, 1, 2, 3, 4, 5) };
@@ -935,9 +935,9 @@ fn test_jit_call() {
         -a
     }
 
-    emit.mov(R64::RAX, R64::RDI)
-        .mov(R64::RDI, R64::RSI)
-        .jmp(R64::RAX);
+    emit.mov(R64::rax, R64::rdi)
+        .mov(R64::rdi, R64::rsi)
+        .jmp(R64::rax);
     let jitmem = JitMem::new(emit.as_ref());
     let res = unsafe { jitmem.call_ptr6_ptr(neg as isize, 1, 2, 3, 4, 5) };
     assert_eq!(-1, res);
@@ -956,20 +956,20 @@ fn make_fibo_code(emit: &mut Emit) {
     let mut fibo_base_case = Label::new();
 
     emit.bind(&mut fibo_entry)
-        .cmp(R64::RDI, 2)
+        .cmp(R64::rdi, 2)
         .jl(&mut fibo_base_case)
-        .push(R64::RDI)
-        .sub(R64::RDI, 1)
+        .push(R64::rdi)
+        .sub(R64::rdi, 1)
         .call(&mut fibo_entry)
-        .pop(R64::RDI)
-        .push(R64::RAX)
-        .sub(R64::RDI, 2)
+        .pop(R64::rdi)
+        .push(R64::rax)
+        .sub(R64::rdi, 2)
         .call(&mut fibo_entry)
-        .pop(R64::RDI)
-        .add(R64::RAX, R64::RDI)
+        .pop(R64::rdi)
+        .add(R64::rax, R64::rdi)
         .ret()
         .bind(&mut fibo_base_case)
-        .mov(R64::RAX, R64::RDI)
+        .mov(R64::rax, R64::rdi)
         .ret();
 }
 
@@ -992,7 +992,7 @@ fn bench_emit_add(b: &mut Bencher) {
     b.iter(|| {
         let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE / 3) {
-            emit.add(R64::R8, R64::R9);
+            emit.add(R64::r8, R64::r9);
         }
         emit
     });
@@ -1014,7 +1014,7 @@ fn bench_emit_push(b: &mut Bencher) {
     b.iter(|| {
         let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE * 2 / 3) {
-            emit.push(R64::R8);
+            emit.push(R64::r8);
         }
         emit
     });
@@ -1036,8 +1036,8 @@ fn bench_emit_push_rm64(b: &mut Bencher) {
     b.iter(|| {
         let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
         for _ in 0..(ALLOC_SIZE / 8) {
-            emit.push(&Addr::B(R64::R12));
-            emit.push(&Addr::B(R64::R13));
+            emit.push(&Addr::B(R64::r12));
+            emit.push(&Addr::B(R64::r13));
         }
         emit
     });

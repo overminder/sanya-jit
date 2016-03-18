@@ -2,25 +2,26 @@ use self::R64::*;
 
 #[repr(u8)]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[allow(non_camel_case_types)]
 pub enum R64 {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
+    rax = 0,
+    rcx = 1,
+    rdx = 2,
+    rbx = 3,
 
-    RSP = 4,
-    RBP = 5,
-    RSI = 6,
-    RDI = 7,
+    rsp = 4,
+    rbp = 5,
+    rsi = 6,
+    rdi = 7,
 
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
+    r8 = 8,
+    r9 = 9,
+    r10 = 10,
+    r11 = 11,
+    r12 = 12,
+    r13 = 13,
+    r14 = 14,
+    r15 = 15,
 }
 
 impl R64 {
@@ -33,11 +34,11 @@ impl R64 {
     }
 
     pub fn is_rsp_or_r12(&self) -> bool {
-        self.lower_part() == RSP.lower_part()
+        self.lower_part() == rsp.lower_part()
     }
 
     pub fn is_rbp_or_r13(&self) -> bool {
-        self.lower_part() == RBP.lower_part()
+        self.lower_part() == rbp.lower_part()
     }
 }
 

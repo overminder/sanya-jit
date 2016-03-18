@@ -181,11 +181,11 @@ impl SIB {
     }
 
     pub fn new_b(b: R64) -> Self {
-        SIB::new(S1, RSP, b)
+        SIB::new(S1, rsp, b)
     }
 
     pub fn new_si(s: Scale, i: R64) -> Self {
-        SIB::new(s, i, RBP)
+        SIB::new(s, i, rbp)
     }
 
     pub fn encoding(self) -> u8 {
@@ -228,7 +228,7 @@ impl Addr {
             &BD(r, _) |
             &BISD(r, _, _, _) => Some(r),
             &IS(_, _) => None,
-            &PcRel(_) => Some(RBP),
+            &PcRel(_) => Some(rbp),
         }
     }
 

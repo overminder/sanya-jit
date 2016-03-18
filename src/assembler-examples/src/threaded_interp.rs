@@ -65,14 +65,14 @@ fn build_dispatch_skip_oparg(emit: &mut Emit, vr: &VMRegs) {
 
 fn build_interp() -> (Vec<usize>, JitMem) {
     let mut emit = Emit::new();
-    emit.jmp(&(RDI + RSI * 8));
+    emit.jmp(&(rdi + rsi * 8));
     let mut lbl0 = Label::new();
     emit.bind(&mut lbl0);
-    emit.mov(RAX, 42);
+    emit.mov(rax, 42);
     emit.ret();
     let mut lbl1 = Label::new();
     emit.bind(&mut lbl1);
-    emit.mov(RAX, 4242);
+    emit.mov(rax, 4242);
     emit.ret();
     let jm = JitMem::new(emit.as_ref());
 

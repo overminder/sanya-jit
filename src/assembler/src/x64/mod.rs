@@ -121,9 +121,9 @@ fn emit_addr_with_opcodes(buf: &mut Emit, mut rex: REX, opcodes: &[u8], reg: Reg
         }
         modrm = ModRM::new(Mod::Indirect, reg, base);
     } else {
-        // mod = 00 & rm = RBP: index * scale + disp32
+        // mod = 00 & rm = rbp: index * scale + disp32
         assert!(op.is_index_scale());
-        modrm = ModRM::new(Mod::IndirectBP, reg, R64::RSP);
+        modrm = ModRM::new(Mod::IndirectBP, reg, R64::rsp);
         mb_disp = Some(0);
     }
 
@@ -152,7 +152,7 @@ fn emit_addr_with_opcodes(buf: &mut Emit, mut rex: REX, opcodes: &[u8], reg: Reg
         &BIS(_, index, scale) |
         &BISD(_, index, scale, _) => {
             mb_sib = Some(SIB::new(scale, index, mb_base.unwrap()));
-            modrm.rm = R64::RSP;
+            modrm.rm = R64::rsp;
         }
         &IS(index, scale) => {
             mb_sib = Some(SIB::new_si(scale, index));

@@ -171,7 +171,7 @@ impl<'a> NodeCompiler<'a> {
         // Ensure the stack is 16-byte aligned after the call.
         // Keep this in sync with the actual stack length.
         let sp_changed = if stackmap.len() & 1 == 1 {
-            self.emit.add(RSP, -8);
+            self.emit.add(rsp, -8);
             stackmap.push_word();
             true
         } else {
@@ -187,7 +187,7 @@ impl<'a> NodeCompiler<'a> {
                 .mov(TMP, &universe_invocation_chain())
                 .lea(TMP2, &mut label_ret_addr)
                 .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_RIP), TMP2)
-                .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_RBP), RBP);
+                .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_rbp), rbp);
         }
 
         // Do the actuall call.
@@ -206,7 +206,7 @@ impl<'a> NodeCompiler<'a> {
 
         // And restore the stack.
         if sp_changed {
-            self.emit.add(RSP, 8);
+            self.emit.add(rsp, 8);
         }
     }
 
@@ -261,7 +261,7 @@ impl<'a> NodeCompiler<'a> {
                 let mut closure_ptr_loaded = false;
                 // XXX: Keep the size calculation in sync with rt::oop.
                 self.load_info(TMP, closure_id);
-                self.emit.mov(&closure_info(RAX), TMP);
+                self.emit.mov(&closure_info(rax), TMP);
                 for (to_ix, slot) in sc.frame_descr().upval_refs().iter().enumerate() {
                     match slot {
                         &Slot::UpVal(from_ix) => {
@@ -276,7 +276,7 @@ impl<'a> NodeCompiler<'a> {
                         }
                         _ => panic!("NMkClosure: upval_refs contain {:?}", slot),
                     }
-                    self.emit.mov(&upval_slot(RAX, to_ix), TMP);
+                    self.emit.mov(&upval_slot(rax, to_ix), TMP);
                 }
             }
             _ => return Err(format!("Not implemented: {:?}", node)),
@@ -286,7 +286,7 @@ impl<'a> NodeCompiler<'a> {
     fn compile_literal_node(&mut self, node: &LiteralNode, stackmap: StackMap) -> CgResult<()> {
         match node {
             &LitAny(ref e) => {
-                self.load_reloc(RAX, Reloc::Any(e.to_owned()));
+                self.load_reloc(rax, Reloc::Any(e.to_owned()));
             }
         }
         Ok(())
@@ -298,54 +298,54 @@ impl<'a> NodeCompiler<'a> {
             // self.emit_fixnum_allocation(stackmap);
             // self.emit
             // .mov(TMP, i as i64)
-            // .mov(&(RAX + 8), TMP);
+            // .mov(&(rax + 8), TMP);
             // }
             //
             &MkPair(ref car, ref cdr) => {
                 let mut map0 = stackmap;
                 try!(self.compile(cdr, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(car, map0));
-                self.emit.mov(TMP, RAX);
+                self.emit.mov(TMP, rax);
                 self.emit_allocation(map0,
                                      self.universe.pair_info.sizeof_instance() as i32,
                                      &[(true, TMP)]);
                 self.emit
-                    .mov(&(RAX + 8), TMP)
+                    .mov(&(rax + 8), TMP)
                     .mov(TMP, self.universe.pair_info.entry_word() as i64)
-                    .mov(&closure_info(RAX), TMP)
+                    .mov(&closure_info(rax), TMP)
                     .pop(TMP)
-                    .mov(&(RAX + 16), TMP);
+                    .mov(&(rax + 16), TMP);
             }
             &MkOopArray(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
-                self.push_oop(RAX, &mut precall_map);
+                self.push_oop(rax, &mut precall_map);
                 try!(self.compile(len, precall_map));
                 self.emit
-                    .mov(RDI, UNIVERSE_PTR)
-                    .mov(RSI, RAX)
-                    .pop(RDX);
+                    .mov(rdi, UNIVERSE_PTR)
+                    .mov(rsi, rax)
+                    .pop(rdx);
                 self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                    emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_ooparray) })
-                        .call(RAX);
+                    emit.mov(rax, unsafe { transmute::<_, i64>(alloc_ooparray) })
+                        .call(rax);
                 });
             }
             &MkI64Array(ref len, ref fill) => {
                 let mut precall_map = stackmap;
                 try!(self.compile(fill, precall_map));
                 // unbox and push `fill`
-                self.push_word(&(RAX + 8), &mut precall_map);
+                self.push_word(&(rax + 8), &mut precall_map);
                 try!(self.compile(len, precall_map));
-                // RSI: unboxed `len`
-                // RDX: `fill`
+                // rsi: unboxed `len`
+                // rdx: `fill`
                 self.emit
-                    .mov(RDI, UNIVERSE_PTR)
-                    .mov(RSI, &(RAX + 8))
-                    .pop(RDX);
+                    .mov(rdi, UNIVERSE_PTR)
+                    .mov(rsi, &(rax + 8))
+                    .pop(rdx);
                 self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                    emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_i64array) })
-                        .call(RAX);
+                    emit.mov(rax, unsafe { transmute::<_, i64>(alloc_i64array) })
+                        .call(rax);
                 });
             }
             &MkClosure(closure_id) => {
@@ -359,7 +359,7 @@ impl<'a> NodeCompiler<'a> {
                     // XXX: Keep the size calculation in sync with rt::oop.
                     self.emit_allocation(stackmap, ((1 + npayloads) * 8) as i32, &[]);
                     self.load_info(TMP, closure_id);
-                    self.emit.mov(&closure_info(RAX), TMP);
+                    self.emit.mov(&closure_info(rax), TMP);
                     for (to_ix, slot) in sc.frame_descr().upval_refs().iter().enumerate() {
                         match slot {
                             &Slot::UpVal(from_ix) => {
@@ -374,7 +374,7 @@ impl<'a> NodeCompiler<'a> {
                             }
                             _ => panic!("NMkClosure: upval_refs contain {:?}", slot),
                         }
-                        self.emit.mov(&upval_slot(RAX, to_ix), TMP);
+                        self.emit.mov(&upval_slot(rax, to_ix), TMP);
                     }
 
                     return Ok(());
@@ -388,8 +388,8 @@ impl<'a> NodeCompiler<'a> {
                 for slot in sc.frame_descr().upval_refs().iter().rev() {
                     match slot {
                         &Slot::UpVal(ix) => {
-                            self.emit.mov(RAX, &closure_ptr());
-                            self.push_oop(&upval_slot(RAX, ix), &mut map0);
+                            self.emit.mov(rax, &closure_ptr());
+                            self.push_oop(&upval_slot(rax, ix), &mut map0);
                         }
                         &Slot::Local(ix) => {
                             self.push_oop(&frame_slot(ix), &mut map0);
@@ -399,28 +399,28 @@ impl<'a> NodeCompiler<'a> {
                 }
 
                 // Calling out to alloc the closure.
-                self.emit.mov(RDI, UNIVERSE_PTR);
-                self.load_info(RSI, closure_id);
-                self.emit.mov(RDX, RSP);
+                self.emit.mov(rdi, UNIVERSE_PTR);
+                self.load_info(rsi, closure_id);
+                self.emit.mov(rdx, rsp);
 
                 self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
-                    emit.mov(RAX, unsafe { transmute::<_, i64>(alloc_closure) })
-                        .call(RAX);
+                    emit.mov(rax, unsafe { transmute::<_, i64>(alloc_closure) })
+                        .call(rax);
                 });
 
                 // Restore the stack ptr.
-                self.emit.add(RSP, 8 * npayloads as i32);
+                self.emit.add(rsp, 8 * npayloads as i32);
             }
             &MkBox(ref n) => {
                 try!(self.compile(n, stackmap));
-                self.emit.mov(TMP, RAX);
+                self.emit.mov(TMP, rax);
                 self.emit_allocation(stackmap,
                                      self.universe.box_info.sizeof_instance() as i32,
                                      &[(true, TMP)]);
                 self.emit
-                    .mov(&(RAX + 8), TMP)
+                    .mov(&(rax + 8), TMP)
                     .mov(TMP, self.universe.box_info.entry_word() as i64)
-                    .mov(&closure_info(RAX), TMP);
+                    .mov(&closure_info(rax), TMP);
             }
         }
         Ok(())
@@ -436,27 +436,27 @@ impl<'a> NodeCompiler<'a> {
             }
             &NReadBox(ref n) => {
                 try!(self.compile(n, stackmap));
-                self.emit.mov(RAX, &(RAX + 8));
+                self.emit.mov(rax, &(rax + 8));
             }
             &NWriteBox(ref n, ref v) => {
                 let mut map0 = stackmap;
                 try!(self.compile(v, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(n, map0));
                 self.emit
                     .pop(TMP)
-                    .mov(&(RAX + 8), TMP);
+                    .mov(&(rax + 8), TMP);
             }
             &NCall { ref func, ref args, is_tail } => {
                 let mut precall_map = stackmap;
                 // Eval args in the reverse order
                 for arg in args.iter().rev() {
                     try!(self.compile(arg, precall_map));
-                    self.push_oop(RAX, &mut precall_map);
+                    self.push_oop(rax, &mut precall_map);
                 }
                 // Eval func
                 try!(self.compile(func, precall_map));
-                self.emit.mov(CLOSURE_PTR, RAX);
+                self.emit.mov(CLOSURE_PTR, rax);
 
                 for (r, _) in ARG_REGS.iter().zip(args.iter()) {
                     self.emit.pop(*r);
@@ -492,7 +492,7 @@ impl<'a> NodeCompiler<'a> {
 
                     self.load_reloc(TMP, Reloc::of_bool(false));
                     self.emit
-                        .cmp(RAX, TMP)
+                        .cmp(rax, TMP)
                         .je(&mut label_false);
                 }
 
@@ -511,24 +511,24 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(last, stackmap));
             }
             &NReadArgument(arg_ix) => {
-                self.emit.mov(RAX, ARG_REGS[arg_ix]);
+                self.emit.mov(rax, ARG_REGS[arg_ix]);
             }
             &NReadSlot(Slot::Global(name)) => {
-                self.load_reloc(RAX, Reloc::Global(name.to_owned()));
-                // self.emit.lea(RAX, self.labels.get_mut(name).unwrap());
+                self.load_reloc(rax, Reloc::Global(name.to_owned()));
+                // self.emit.lea(rax, self.labels.get_mut(name).unwrap());
             }
             &NReadSlot(Slot::Local(ix)) => {
-                self.emit.mov(RAX, &frame_slot(ix));
+                self.emit.mov(rax, &frame_slot(ix));
             }
             &NReadSlot(Slot::UpVal(ix)) => {
-                self.emit.mov(RAX, &closure_ptr());
-                self.emit.mov(RAX, &upval_slot(RAX, ix));
+                self.emit.mov(rax, &closure_ptr());
+                self.emit.mov(rax, &upval_slot(rax, ix));
             }
             &NBindLocal(ref bs, ref n) => {
                 let mut map0 = stackmap;
                 for &(ix, ref bn) in bs {
                     try!(self.compile(bn, map0));
-                    self.emit.mov(&frame_slot(ix), RAX);
+                    self.emit.mov(&frame_slot(ix), rax);
                     map0.set_local_slot(ix, true);
                 }
                 try!(self.compile(n, map0));
@@ -546,7 +546,7 @@ impl<'a> NodeCompiler<'a> {
                 let mut alloc_ptr_offset = 0;
                 for (ith_node, &(ix, ref bn)) in bs.iter().enumerate() {
                     self.emit
-                        .lea(TMP, &(RAX + alloc_ptr_offset as i32))
+                        .lea(TMP, &(rax + alloc_ptr_offset as i32))
                         .mov(&frame_slot(ix), TMP);
                     alloc_ptr_offset += alloc_sizes[ith_node];
                     map0.set_local_slot(ix, true);
@@ -558,7 +558,7 @@ impl<'a> NodeCompiler<'a> {
 
                     // Not the last node: increase the offset.
                     if ith_node != bs.len() - 1 {
-                        self.emit.add(RAX, alloc_sizes[ith_node] as i32);
+                        self.emit.add(rax, alloc_sizes[ith_node] as i32);
                     }
                 }
                 try!(self.compile(n, map0));
@@ -566,52 +566,52 @@ impl<'a> NodeCompiler<'a> {
             &NReadArrayLength(ref arr) => {
                 let mut map0 = stackmap;
                 try!(self.compile(arr, map0));
-                self.emit.mov(TMP, &(RAX + 8));
+                self.emit.mov(TMP, &(rax + 8));
                 self.emit_fixnum_allocation(map0, TMP);
             }
             &NReadOopArray(ref arr, ref ix) => {
                 let mut map0 = stackmap;
                 try!(self.compile(ix, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(arr, map0));
                 self.emit
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
-                    .mov(RAX, &(RAX + TMP * 8 + 16));  // array indexing
+                    .mov(rax, &(rax + TMP * 8 + 16));  // array indexing
             }
             &NReadI64Array(ref arr, ref ix) => {
                 let mut map0 = stackmap;
                 try!(self.compile(ix, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(arr, map0));
                 self.emit
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
-                    .mov(RAX, &(RAX + TMP * 8 + 16));  // array indexing
+                    .mov(rax, &(rax + TMP * 8 + 16));  // array indexing
             }
             &NWriteOopArray(ref arr, ref ix, ref val) => {
                 let mut map0 = stackmap;
                 try!(self.compile(val, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(ix, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(arr, map0));
                 self.emit
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
-                    .lea(TMP, &(RAX + TMP * 8 + 16))
-                    .pop(RAX)
-                    .mov(&Addr::B(TMP), RAX);
+                    .lea(TMP, &(rax + TMP * 8 + 16))
+                    .pop(rax)
+                    .mov(&Addr::B(TMP), rax);
             }
             &NPrimFF(op, ref n1, ref n2) => {
                 let mut map0 = stackmap;
                 try!(self.compile(n2, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(n1, map0));
 
-                // Unbox the lhs to RAX and pop the rhs to TMP.
+                // Unbox the lhs to rax and pop the rhs to TMP.
                 self.emit
-                    .mov(RAX, &(RAX + 8))
+                    .mov(rax, &(rax + 8))
                     .pop(TMP);
                 map0.pop();
 
@@ -619,22 +619,22 @@ impl<'a> NodeCompiler<'a> {
                 match op {
                     PrimOpFF::Add => {
                         self.emit
-                            .add(RAX, &(TMP + 8));
+                            .add(rax, &(TMP + 8));
                     }
                     PrimOpFF::Sub => {
                         self.emit
-                            .sub(RAX, &(TMP + 8));
+                            .sub(rax, &(TMP + 8));
                     }
                     PrimOpFF::Lt | PrimOpFF::Eq => {
-                        self.emit.cmp(RAX, &(TMP + 8));
+                        self.emit.cmp(rax, &(TMP + 8));
                         self.load_reloc(TMP, Reloc::of_bool(true));
-                        self.load_reloc(RAX, Reloc::of_bool(false));
-                        self.emit.cmovcc(op_to_cond(op), RAX, TMP);
+                        self.load_reloc(rax, Reloc::of_bool(false));
+                        self.emit.cmovcc(op_to_cond(op), rax, TMP);
                         return Ok(());
                     }
                 }
                 // Allocate a new fixnum to store the result.
-                self.emit.mov(TMP, RAX);
+                self.emit.mov(TMP, rax);
                 self.emit_fixnum_allocation(map0, TMP);
             }
             &NPrimO(ref op, ref n1) => {
@@ -642,43 +642,43 @@ impl<'a> NodeCompiler<'a> {
                 match *op {
                     PrimOpO::Display => {
                         self.emit
-                            .mov(RDI, RAX)
-                            .mov(RSI, UNIVERSE_PTR);
+                            .mov(rdi, rax)
+                            .mov(rsi, UNIVERSE_PTR);
                         // Safe to use conv::internal since we don't alloc in display.
                         self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                            emit.mov(RAX, unsafe { transmute::<_, i64>(display_oop) })
-                                .call(RAX);
+                            emit.mov(rax, unsafe { transmute::<_, i64>(display_oop) })
+                                .call(rax);
                         });
                     }
                     PrimOpO::Panic => {
                         self.emit
-                            .mov(RDI, UNIVERSE_PTR)
-                            .mov(RSI, RAX);
+                            .mov(rdi, UNIVERSE_PTR)
+                            .mov(rsi, rax);
                         // Need to sync the universe since we will be unwinding
                         // the generated code's stack.
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(RAX, unsafe { transmute::<_, i64>(panic) })
-                                .call(RAX);
+                            emit.mov(rax, unsafe { transmute::<_, i64>(panic) })
+                                .call(rax);
                         });
                     }
                     PrimOpO::Fixnump => {
                         self.emit
                             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
-                            .cmp(TMP, &Addr::B(RAX));
+                            .cmp(TMP, &Addr::B(rax));
 
                         self.load_reloc(TMP, Reloc::of_bool(true));
-                        self.load_reloc(RAX, Reloc::of_bool(false));
+                        self.load_reloc(rax, Reloc::of_bool(false));
 
-                        self.emit.cmove(RAX, TMP);
+                        self.emit.cmove(rax, TMP);
                     }
                     PrimOpO::CompileModule => {
                         self.emit
-                            .mov(RDI, UNIVERSE_PTR)
-                            .mov(RSI, RAX);
+                            .mov(rdi, UNIVERSE_PTR)
+                            .mov(rsi, rax);
 
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(RAX, unsafe { transmute::<_, i64>(compile_module) })
-                                .call(RAX);
+                            emit.mov(rax, unsafe { transmute::<_, i64>(compile_module) })
+                                .call(rax);
                         });
                     }
                 }
@@ -689,12 +689,12 @@ impl<'a> NodeCompiler<'a> {
         Ok(())
     }
 
-    // To RAX.
+    // To rax.
     fn emit_allocation(&mut self, stackmap: StackMap, alloc_size: i32, tmp_regs: &[(bool, R64)]) {
         let mut label_alloc_success = Label::new();
         // Check heap overflow.
         self.emit
-            .mov(RAX, ALLOC_PTR)
+            .mov(rax, ALLOC_PTR)
             .add(ALLOC_PTR, alloc_size)
             .cmp(ALLOC_PTR, &universe_alloc_limit())
             .jle(&mut label_alloc_success);
@@ -710,12 +710,12 @@ impl<'a> NodeCompiler<'a> {
         }
         // Slow case: sync the runtime state and call out for GC.
         self.emit
-            .mov(ALLOC_PTR, RAX)
-            .mov(RDI, UNIVERSE_PTR)
-            .mov(RSI, alloc_size as i64);
+            .mov(ALLOC_PTR, rax)
+            .mov(rdi, UNIVERSE_PTR)
+            .mov(rsi, alloc_size as i64);
         self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
-            emit.mov(RAX, unsafe { transmute::<_, i64>(full_gc) })
-                .call(RAX);
+            emit.mov(rax, unsafe { transmute::<_, i64>(full_gc) })
+                .call(rax);
         });
         for &(_, r) in tmp_regs.iter().rev() {
             // Restore regs.
@@ -736,9 +736,9 @@ impl<'a> NodeCompiler<'a> {
             self.emit.pop(value_reg);
         }
         self.emit
-            .mov(&(RAX + 8), value_reg)
+            .mov(&(rax + 8), value_reg)
             .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
-            .mov(&Addr::B(RAX), TMP);
+            .mov(&Addr::B(rax), TMP);
     }
 
     // Try to select some better instructions.
@@ -751,13 +751,13 @@ impl<'a> NodeCompiler<'a> {
         Ok(match node {
             &NPrimFF(op, ref lhs, ref rhs) if op_is_cond(op) => {
                 try!(self.compile(rhs, map0));
-                self.push_oop(RAX, &mut map0);
+                self.push_oop(rax, &mut map0);
                 try!(self.compile(lhs, map0));
                 self.emit
-                    .mov(RAX, &(RAX + 8))
+                    .mov(rax, &(rax + 8))
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
-                    .cmp(RAX, TMP)
+                    .cmp(rax, TMP)
                     .jcc(op_to_cond(op).inverse(), label_false);
                 true
             }
@@ -765,7 +765,7 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(rand, map0));
                 self.emit
                     .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
-                    .cmp(TMP, &Addr::B(RAX))
+                    .cmp(TMP, &Addr::B(rax))
                     .jne(label_false);
                 true
             }
@@ -789,7 +789,7 @@ fn universe_invocation_chain() -> Addr {
 }
 
 fn frame_slot(ix: usize) -> Addr {
-    Addr::BD(RBP, -8 * ((1 + EXTRA_CALLER_SAVED_FRAME_SLOTS + ix) as i32))
+    Addr::BD(rbp, -8 * ((1 + EXTRA_CALLER_SAVED_FRAME_SLOTS + ix) as i32))
 }
 
 fn upval_slot(closure_ptr: R64, ix: usize) -> Addr {
@@ -797,7 +797,7 @@ fn upval_slot(closure_ptr: R64, ix: usize) -> Addr {
 }
 
 fn closure_ptr() -> Addr {
-    RBP + (-8)
+    rbp + (-8)
 }
 
 fn closure_info(r: R64) -> Addr {
@@ -805,13 +805,13 @@ fn closure_info(r: R64) -> Addr {
 }
 
 fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize) {
-    emit.push(RBP)
-        .mov(RBP, RSP)
+    emit.push(rbp)
+        .mov(rbp, rsp)
         .push(CLOSURE_PTR);
 
     let frame_slots = frame_descr.local_slot_count();
     if frame_slots != 0 {
-        emit.add(RSP, -8 * (frame_slots as i32));
+        emit.add(rsp, -8 * (frame_slots as i32));
     }
 
     let bare_entry = emit.here();
@@ -820,8 +820,8 @@ fn emit_prologue(emit: &mut Emit, frame_descr: &FrameDescr) -> (StackMap, usize)
 }
 
 fn emit_epilogue(emit: &mut Emit, want_ret: bool) {
-    emit.mov(RSP, RBP)
-        .pop(RBP);
+    emit.mov(rsp, rbp)
+        .pop(rbp);
 
     if want_ret {
         emit.ret();
@@ -849,27 +849,27 @@ pub fn make_rust_entry(emit: &mut Emit) -> (usize, usize) {
 
     // Standard prologue.
     emit.bind(&mut entry)
-        .push(RBP)
-        .mov(RBP, RSP);
+        .push(rbp)
+        .mov(rbp, rsp);
 
     // Save the callee-saved regs clobbered by our runtime.
     emit.push(ALLOC_PTR)
         .push(UNIVERSE_PTR);
 
     // Get the relevant regs from/to the runtime state.
-    emit.mov(UNIVERSE_PTR, RSI)
+    emit.mov(UNIVERSE_PTR, rsi)
         .mov(ALLOC_PTR, &universe_alloc_ptr());
 
     // Make space for the base rbp list node and
     // add the current rbp to the base rbp list.
-    emit.sub(RSP, size_of::<NativeInvocationChain>() as i32);
+    emit.sub(rsp, size_of::<NativeInvocationChain>() as i32);
     emit.mov(TMP, &universe_invocation_chain())
-        .mov(&(RSP + OFFSET_OF_ICHAIN_NEXT), TMP)
-        .mov(&(RSP + OFFSET_OF_ICHAIN_BASE_RBP), RBP)
+        .mov(&(rsp + OFFSET_OF_ICHAIN_NEXT), TMP)
+        .mov(&(rsp + OFFSET_OF_ICHAIN_BASE_rbp), rbp)
         .mov(TMP, 0_i64)
-        .mov(&(RSP + OFFSET_OF_ICHAIN_TOP_RBP), TMP)
-        .mov(&(RSP + OFFSET_OF_ICHAIN_TOP_RIP), TMP)
-        .mov(&universe_invocation_chain(), RSP);
+        .mov(&(rsp + OFFSET_OF_ICHAIN_TOP_rbp), TMP)
+        .mov(&(rsp + OFFSET_OF_ICHAIN_TOP_RIP), TMP)
+        .mov(&universe_invocation_chain(), rsp);
 
     // Enter the real main.
     emit.call(&Addr::B(CLOSURE_PTR));
@@ -882,15 +882,15 @@ pub fn make_rust_entry(emit: &mut Emit) -> (usize, usize) {
         .mov(&universe_invocation_chain(), TMP);
 
     // Dealloc the rbp list node.
-    emit.add(RSP, size_of::<NativeInvocationChain>() as i32);
+    emit.add(rsp, size_of::<NativeInvocationChain>() as i32);
 
     // Restore the saved regs.
     emit.pop(UNIVERSE_PTR)
         .pop(ALLOC_PTR);
 
     // Standard epilogue.
-    emit.mov(RSP, RBP)
-        .pop(RBP)
+    emit.mov(rsp, rbp)
+        .pop(rbp)
         .ret();
 
     // 2. Get it.
@@ -906,16 +906,16 @@ fn sequence_v<A, E>(xs: Vec<Result<A, E>>) -> Result<Vec<A>, E> {
     Ok(ys)
 }
 
-const CLOSURE_PTR: R64 = RDI;
-const ARG_REGS: [R64; 5] = [RSI, RDX, RCX, R8, R9];
+const CLOSURE_PTR: R64 = rdi;
+const ARG_REGS: [R64; 5] = [rsi, rdx, rcx, r8, r9];
 
 // Caller saved regs.
-const TMP: R64 = R10;
-const TMP2: R64 = R11;
+const TMP: R64 = r10;
+const TMP2: R64 = r11;
 
 // Callee saved regs.
-const ALLOC_PTR: R64 = R12;
-const UNIVERSE_PTR: R64 = R13;
+const ALLOC_PTR: R64 = r12;
+const UNIVERSE_PTR: R64 = r13;
 
 const OPTIMIZE_IF_CMP: bool = true;
 const OPTIMIZE_KNOWN_SELF_CALL: bool = true;

@@ -8,20 +8,20 @@ fn make_fibo_code(emit: &mut Emit) {
     let mut fibo_base_case = Label::new();
 
     emit.bind(&mut fibo_entry)
-        .cmp(RDI, 2)
+        .cmp(rdi, 2)
         .jl(&mut fibo_base_case)
-        .push(RDI)
-        .sub(RDI, 1)
+        .push(rdi)
+        .sub(rdi, 1)
         .call(&mut fibo_entry)
-        .pop(RDI)
-        .push(RAX)
-        .sub(RDI, 2)
+        .pop(rdi)
+        .push(rax)
+        .sub(rdi, 2)
         .call(&mut fibo_entry)
-        .pop(RDI)
-        .add(RAX, RDI)
+        .pop(rdi)
+        .add(rax, rdi)
         .ret()
         .bind(&mut fibo_base_case)
-        .mov(RAX, RDI)
+        .mov(rax, rdi)
         .ret();
 }
 

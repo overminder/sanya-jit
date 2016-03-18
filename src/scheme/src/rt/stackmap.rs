@@ -231,8 +231,8 @@ impl Frame {
 }
 
 pub const OFFSET_OF_ICHAIN_NEXT: i32 = 0;
-pub const OFFSET_OF_ICHAIN_BASE_RBP: i32 = 8;
-pub const OFFSET_OF_ICHAIN_TOP_RBP: i32 = 16;
+pub const OFFSET_OF_ICHAIN_BASE_rbp: i32 = 8;
+pub const OFFSET_OF_ICHAIN_TOP_rbp: i32 = 16;
 pub const OFFSET_OF_ICHAIN_TOP_RIP: i32 = 24;
 
 // A linked list of Rust->Native->Rust calls.
