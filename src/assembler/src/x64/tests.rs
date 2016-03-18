@@ -1,17 +1,13 @@
 #![cfg(test)]
 
-use tempdir::TempDir;
-use std::process::{Stdio, Command};
-use std::fs::File;
-use std::path::Path;
-use std::io::{BufReader, BufRead, Write};
-
-use super::*;
-use test::Bencher;
-use super::Addr::*;
-use super::Scale::*;
+use x64::*;
+use x64::Addr::*;
+use x64::Scale::*;
+use x64::utils::*;
 use mem::JitMem;
 use emit::*;
+
+use test::Bencher;
 
 // Test traits.
 
@@ -357,6 +353,10 @@ enum Arith {
     AddR64M(R64, Addr),
     SubR64M(R64, Addr),
     CmpR64M(R64, Addr),
+
+    AddMR64(Addr, R64),
+    SubMR64(Addr, R64),
+    CmpMR64(Addr, R64),
 }
 
 impl Instr for Arith {
@@ -375,6 +375,10 @@ impl Instr for Arith {
             &AddR64M(dst, ref src) => buf.add(dst, src),
             &SubR64M(dst, ref src) => buf.sub(dst, src),
             &CmpR64M(dst, ref src) => buf.cmp(dst, src),
+
+            &AddMR64(ref dst, src) => buf.add(dst, src),
+            &SubMR64(ref dst, src) => buf.sub(dst, src),
+            &CmpMR64(ref dst, src) => buf.cmp(dst, src),
         };
     }
 }
@@ -399,6 +403,10 @@ impl Enumerate for Arith {
                 res.push(AddR64M(*dst, src.clone()));
                 res.push(SubR64M(*dst, src.clone()));
                 res.push(CmpR64M(*dst, src.clone()));
+
+                res.push(AddMR64(src.clone(), *dst));
+                res.push(SubMR64(src.clone(), *dst));
+                res.push(CmpMR64(src.clone(), *dst));
             }
         }
         res
@@ -421,12 +429,15 @@ impl Arith {
         match self {
             &AddR64R64(_, _) |
             &AddR64I32(_, _) |
-            &AddR64M(_, _) => "add",
+            &AddR64M(_, _) |
+            &AddMR64(_, _) => "add",
             &SubR64R64(_, _) |
             &SubR64I32(_, _) |
+            &SubMR64(_, _) |
             &SubR64M(_, _) => "sub",
             &CmpR64R64(_, _) |
             &CmpR64I32(_, _) |
+            &CmpMR64(_, _) |
             &CmpR64M(_, _) => "cmp",
         }
         .to_owned()
@@ -446,6 +457,10 @@ impl Arith {
             &AddR64M(_, ref m) |
             &SubR64M(_, ref m) |
             &CmpR64M(_, ref m) => m.as_att_syntax(),
+
+            &AddMR64(_, r) |
+            &SubMR64(_, r) |
+            &CmpMR64(_, r) => r.as_att_syntax(),
         }
     }
 
@@ -461,6 +476,9 @@ impl Arith {
             &CmpR64R64(r, _) |
             &CmpR64I32(r, _) |
             &CmpR64M(r, _) => r.as_att_syntax(),
+            &AddMR64(ref m, _) |
+            &SubMR64(ref m, _) |
+            &CmpMR64(ref m, _) => m.as_att_syntax(),
         }
     }
 }
@@ -897,32 +915,6 @@ fn assert_encoding<F>(expected: &[u8], f: F)
     assert_eq!(e.as_ref(), expected);
 }
 
-fn dump_file<A: AsRef<Path>>(path: A, bs: &[u8]) {
-    let mut f = File::create(path).unwrap();
-    f.write_all(bs).unwrap();
-}
-
-fn objdump_disas_lines(bs: &[u8]) -> Vec<String> {
-
-    let tdir = TempDir::new("assembler.x64.text").unwrap();
-    let mut tmp_path = tdir.path().to_owned();
-    tmp_path.push("disassembly");
-
-    dump_file(&tmp_path, bs);
-
-    let mut objdump = Command::new("objdump")
-                          .arg("-D")
-                          .arg("-bbinary")
-                          .arg("-mi386")
-                          .arg("-Mx86-64")
-                          .arg(&tmp_path)
-                          .stdout(Stdio::piped())
-                          .spawn()
-                          .unwrap();
-
-    let stdout = BufReader::new(objdump.stdout.as_mut().unwrap());
-    stdout.lines().skip(7 /* Non-disassembly lines */).map(|line| line.unwrap()).collect()
-}
 
 fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
     let instrs = A::possible_enumerations();
@@ -956,12 +948,16 @@ fn test_movx_matches_disassembly() {
 }
 
 #[test]
+fn test_mov_matches_disassembly() {
+    assert_assembly_matches_disassembly::<Mov>();
+}
+
+#[test]
 fn test_assembly_matches_disassembly() {
     assert_assembly_matches_disassembly::<Cmovcc>();
     assert_assembly_matches_disassembly::<Push>();
     assert_assembly_matches_disassembly::<Pop>();
     assert_assembly_matches_disassembly::<Arith>();
-    assert_assembly_matches_disassembly::<Mov>();
 
     assert_assembly_matches_disassembly::<Branch>();
     assert_assembly_matches_disassembly::<Ret>();

@@ -5,6 +5,7 @@
 
 pub mod traits;
 pub mod encoding;
+pub mod utils;
 mod consts;
 mod tests;
 
@@ -268,6 +269,23 @@ impl<'a> EmitArith<R64, &'a Addr> for Emit {
 
     fn cmp(&mut self, dst: R64, src: &Addr) -> &mut Self {
         emit_addr(self, REX::w(), 0x3B, RegOrOpExt::reg(dst), src);
+        self
+    }
+}
+
+impl<'a> EmitArith<&'a Addr, R64> for Emit {
+    fn add(&mut self, dst: &Addr, src: R64) -> &mut Self {
+        emit_addr(self, REX::w(), 0x01, RegOrOpExt::reg(src), dst);
+        self
+    }
+
+    fn sub(&mut self, dst: &Addr, src: R64) -> &mut Self {
+        emit_addr(self, REX::w(), 0x29, RegOrOpExt::reg(src), dst);
+        self
+    }
+
+    fn cmp(&mut self, dst: &Addr, src: R64) -> &mut Self {
+        emit_addr(self, REX::w(), 0x39, RegOrOpExt::reg(src), dst);
         self
     }
 }

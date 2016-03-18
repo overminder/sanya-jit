@@ -6,6 +6,4 @@ authors = ["Overmind JIANG <p90eri@gmail.com>"]
 [dependencies]
 mmap = "0.1.1"
 byteorder = "0.4.2"
-
-[dev-dependencies]
 tempdir = "0.3"

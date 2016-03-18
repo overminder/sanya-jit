@@ -8,7 +8,6 @@ extern crate byteorder;
 #[cfg(test)]
 extern crate test;
 
-#[cfg(test)]
 extern crate tempdir;
 
 pub mod mem;
