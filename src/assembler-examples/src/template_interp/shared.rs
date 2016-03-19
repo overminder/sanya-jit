@@ -5,6 +5,10 @@ use assembler::x64::utils::objdump_disas_lines;
 use std::fmt::Debug;
 use std::env;
 
+extern "rust-intrinsic" {
+    pub fn breakpoint();
+}
+
 pub trait Dispatchable<Opts>: Sized {
     fn build_dispatch_case(self, emit: &mut Emit, opts: &Opts);
     fn build_dispatch_with_pc_offset(emit: &mut Emit, opts: &Opts, offset: i32);

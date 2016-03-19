@@ -3,14 +3,10 @@ use assembler::x64::R64::*;
 use assembler::x64::traits::*;
 use assembler::emit::{Emit, Label};
 
-use template_interp::shared::{Dispatchable, build_interp};
+use template_interp::shared::{Dispatchable, build_interp, breakpoint};
 
 use std::mem;
 use std::env;
-
-extern "rust-intrinsic" {
-    fn breakpoint();
-}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -206,12 +202,9 @@ fn build_dispatch_correct_pc(emit: &mut Emit, vr: &VMRegs) {
 }
 
 
-pub fn main() {
+pub fn main(n: u8) {
     use self::Instr::*;
     use self::Op::*;
-
-    let args: Vec<String> = env::args().collect();
-    let n = args[1].parse().unwrap();
 
     let mut opts = Opts::new();
     if env::var("NO_DUP_BR_TAILS").is_ok() {
@@ -221,7 +214,7 @@ pub fn main() {
     let (labels, jm) = build_interp(LAST_OP, &(VMRegs::new(), opts));
 
     let main_code = instr_to_bs(&[
-        OpWithArg(LoadI8, n),
+        OpWithArg(LoadI8, n as i8),
         OpWithArg(Call, 1),
         OpOnly(Halt),
     ]);

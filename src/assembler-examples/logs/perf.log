@@ -1,0 +1,37 @@
+$ perf stat ./target/debug/examples/threaded_interp reg 40
+res = 102334155
+
+ Performance counter stats for './target/debug/examples/threaded_interp reg 40':
+
+       4809.409919      task-clock (msec)         #    1.001 CPUs utilized
+                 6      context-switches          #    0.001 K/sec
+                 0      cpu-migrations            #    0.000 K/sec
+                95      page-faults               #    0.020 K/sec
+    13,988,318,867      cycles                    #    2.909 GHz                      (83.32%)
+     7,321,706,673      stalled-cycles-frontend   #   52.34% frontend cycles idle     (83.35%)
+     4,113,613,791      stalled-cycles-backend    #   29.41% backend  cycles idle     (66.70%)
+    12,921,364,417      instructions              #    0.92  insns per cycle
+                                                  #    0.57  stalled cycles per insn  (83.35%)
+     1,822,076,812      branches                  #  378.857 M/sec                    (83.35%)
+       124,173,696      branch-misses             #    6.81% of all branches          (83.27%)
+
+       4.806067019 seconds time elapsed
+
+$ perf stat ./target/debug/examples/threaded_interp stack 40
+res = 102334155
+
+ Performance counter stats for './target/debug/examples/threaded_interp stack 40':
+
+       5765.702347      task-clock (msec)         #    1.001 CPUs utilized
+                 6      context-switches          #    0.001 K/sec
+                 0      cpu-migrations            #    0.000 K/sec
+                93      page-faults               #    0.016 K/sec
+    17,076,284,210      cycles                    #    2.962 GHz                      (83.34%)
+     6,334,620,494      stalled-cycles-frontend   #   37.10% frontend cycles idle     (83.34%)
+     3,189,130,092      stalled-cycles-backend    #   18.68% backend  cycles idle     (66.67%)
+    16,897,316,196      instructions              #    0.99  insns per cycle
+                                                  #    0.37  stalled cycles per insn  (83.34%)
+     3,313,273,589      branches                  #  574.652 M/sec                    (83.34%)
+       259,057,175      branch-misses             #    7.82% of all branches          (83.32%)
+
+       5.761191633 seconds time elapsed
