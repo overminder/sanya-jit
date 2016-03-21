@@ -144,8 +144,8 @@ const INSTR_SIZE: i32 = 4;
 
 fn dispatch_next_pc_offset(emit: &mut Emit, vr: &VMRegs, offset: i32) {
     if offset == 0 {
-        emit.movsb(vr.tmpc, &Addr::B(vr.pc));
-        emit.movsb(vr.tmpa, &(vr.pc + 1));
+        emit.movsb(vr.tmpc, &Addr::B(vr.pc))
+            .movsb(vr.tmpa, &(vr.pc + 1));
     } else {
         emit.movsb(vr.tmpc, &(vr.pc + offset * INSTR_SIZE))
             .movsb(vr.tmpa, &(vr.pc + (offset * INSTR_SIZE + 1)))
