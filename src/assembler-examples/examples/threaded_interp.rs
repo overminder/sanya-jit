@@ -10,6 +10,7 @@ fn main() {
     let f: fn(u8) = match name.as_ref() {
         "stack" => assembler_examples::template_interp::stack_based::main,
         "reg" => assembler_examples::template_interp::reg_based::main,
+        "trace" => assembler_examples::template_interp::stack_with_trace::main,
         _ => panic!("No impl for {}", name),
     };
 

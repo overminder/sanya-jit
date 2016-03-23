@@ -5,10 +5,9 @@
 pub struct InterpGen {
 }
 
-/// Register-based VM instructions. Layout:
-/// [63 ... 48] [47 ... 32] [31 ... 16] [15 ... 0]
-/// [C or ImmH] [B or ImmL] [A        ] [Op      ]
-#[repr(C)]
+/// Stack-based VM instructions. Layout:
+/// op_u8 oparg_i16
+#[repr(u8)]
 pub enum Op {
     Nop = 0,
 
@@ -56,4 +55,9 @@ pub enum Op {
     PrimDisplay,
     PrimPanic,
     PrimFixnump,
+}
+
+pub enum Instr {
+    OpOnly(Op),
+    OpArg(Op, i16),
 }
