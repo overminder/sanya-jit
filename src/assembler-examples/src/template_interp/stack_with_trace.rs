@@ -59,14 +59,21 @@ fn instr_to_bs(is: &[Instr]) -> Vec<u8> {
 
 const LAST_OP: Op = Op::Add;
 
-struct VMRegs {
-    pc: R64,
-    tmpl: R64,
-    tmpr: R64,
-    dispatch_table: R64,
-    func_table: R64,
-    trace_ctx: R64,
+
+#[repr(C)]
+struct InterpContext {
+    pc: isize,
+    dispatch_table: isize,
+    func_table: isize,
+    trace_ctx: isize,
+    sp: isize,
 }
+
+const PC_OFFSET: i32 = 0;
+const DT_OFFSET: i32 = 1 * 8;
+const FT_OFFSET: i32 = 2 * 8;
+const TC_OFFSET: i32 = 3 * 8;
+const SP_OFFSET: i32 = 4 * 8;
 
 #[derive(Debug)]
 struct Trace {
@@ -127,6 +134,17 @@ impl TraceContext {
     }
 }
 
+struct VMRegs {
+    pc: R64,
+    tmpl: R64,
+    tmpr: R64,
+    dispatch_table: R64,
+    func_table: R64,
+    trace_ctx: R64,
+    sp: R64,
+    scratch: R64,
+}
+
 impl VMRegs {
     fn new() -> Self {
         VMRegs {
@@ -136,6 +154,8 @@ impl VMRegs {
             tmpl: rcx,
             tmpr: r8,
             trace_ctx: r9,
+            sp: r10,
+            scratch: r11,
         }
     }
 
@@ -153,7 +173,7 @@ impl Opts {
     fn new() -> Self {
         Opts {
             duplicate_branch_op_tails: true,
-            trace_on: true,
+            trace_on: false,
         }
     }
 }
@@ -176,7 +196,7 @@ impl Dispatchable<(VMRegs, Opts)> for Op {
     }
 
     fn build_dispatch_with_pc_offset(emit: &mut Emit, args: &(VMRegs, Opts), offset: i32) {
-        Op::build_dispatch_with_pc_offset(emit, &args.0, &args.1, offset);
+        build_dispatch_with_pc_offset(emit, &args.0, &args.1, offset);
     }
 }
 
@@ -188,21 +208,37 @@ impl Op {
     fn build_dispatch_case(self, emit: &mut Emit, vr: &VMRegs, opts: &Opts) {
         use self::Op::*;
 
+        fn push_r(emit: &mut Emit, vr: &VMRegs, r: R64) {
+            emit.mov(&(vr.sp + (-8)), r)
+                .sub(vr.sp, 8);
+        }
+
+        fn push_a(emit: &mut Emit, vr: &VMRegs, a: &Addr) {
+            emit.mov(vr.scratch, a)
+                .mov(&(vr.sp + (-8)), vr.scratch)
+                .sub(vr.sp, 8);
+        }
+
+        fn pop_r(emit: &mut Emit, vr: &VMRegs, r: R64) {
+            emit.mov(r, &Addr::B(vr.sp))
+                .add(vr.sp, 8);
+        }
+
         match self {
             LoadI8 => {
-                emit.movsb(vr.tmpl, &(vr.pc + 1))
-                    .push(vr.tmpl);
+                emit.movsb(vr.tmpl, &(vr.pc + 1));
+                push_r(emit, vr, vr.tmpl);
                 build_dispatch_skip_oparg(emit, vr, opts);
             }
             LoadL => {
-                emit.movsb(vr.tmpl, &(vr.pc + 1))
-                    .push(&(rsp + vr.tmpl * 8));
+                emit.movsb(vr.tmpl, &(vr.pc + 1));
+                push_a(emit, vr, &(vr.sp + vr.tmpl * 8));
                 build_dispatch_skip_oparg(emit, vr, opts);
             }
             BranchLt => {
-                emit.pop(vr.tmpr)
-                    .pop(vr.tmpl)
-                    .cmp(vr.tmpl, vr.tmpr);
+                pop_r(emit, vr, vr.tmpr);
+                pop_r(emit, vr, vr.tmpl);
+                emit.cmp(vr.tmpl, vr.tmpr);
 
                 if opts.duplicate_branch_op_tails {
                     let mut lt = Label::new();
@@ -223,74 +259,78 @@ impl Op {
             }
             Call => {
                 emit.movsb(vr.tmpl, &(vr.pc + 1))
-                    .add(vr.pc, 2)
-                    .push(vr.pc)
-                    .mov(vr.pc, &(vr.func_table + vr.tmpl * 8));
+                    .add(vr.pc, 2);
+
+                push_r(emit, vr, vr.pc);
+                emit.mov(vr.pc, &(vr.func_table + vr.tmpl * 8));
                 build_dispatch_correct_pc(emit, vr, opts);
             }
             Ret => {
-                emit.pop(vr.tmpl)
-                    .movsb(vr.tmpr, &(vr.pc + 1))
-                    .pop(vr.pc)
-                    .lea(rsp, &(rsp + vr.tmpr * 8))
-                    .push(vr.tmpl);
+                pop_r(emit, vr, vr.tmpl);
+                emit.movsb(vr.tmpr, &(vr.pc + 1));
+                pop_r(emit, vr, vr.pc);
+                emit.lea(vr.sp, &(vr.sp + vr.tmpr * 8));
+                push_r(emit, vr, vr.tmpl);
                 build_dispatch_correct_pc(emit, vr, opts);
             }
             Halt => {
-                emit.pop(rax)
-                    .ret();
+                pop_r(emit, vr, rax);
+                emit.ret();
             }
             Add => {
-                emit.pop(vr.tmpr)
-                    .add(&Addr::B(rsp), vr.tmpr);
-                Op::build_dispatch_with_pc_offset(emit, vr, opts, 1);
+                pop_r(emit, vr, vr.tmpr);
+                emit.add(&Addr::B(vr.sp), vr.tmpr);
+                build_dispatch_with_pc_offset(emit, vr, opts, 1);
             }
         }
     }
 
-    fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, opts: &Opts, offset: i32) {
-        if offset == 0 {
-            emit.movsb(vr.tmpl, &Addr::B(vr.pc));
-        } else {
-            emit.movsb(vr.tmpl, &(vr.pc + offset))
-                .add(vr.pc, offset);
-        }
-
-        // Like PyPy's jit_merge_point
-        if opts.trace_on {
-            // XXX: stack alignment?
-            for r in vr.regs() {
-                emit.push(r);
-            }
-
-            // Align the stack
-            emit.push(rsp)
-                .push(&Addr::B(rsp))
-                .and(rsp, -16)
-
-                .mov(rdi, vr.trace_ctx)
-                .mov(rsi, vr.pc)
-                .mov(rax, unsafe { mem::transmute::<_, i64>(TraceContext::record_unsafe) })
-                .call(rax)
-
-                .mov(rsp, &(rsp + 8));
-
-            for r in vr.regs().iter().rev() {
-                emit.pop(*r);
-            }
-        }
-
-        emit.jmp(&(vr.dispatch_table + vr.tmpl * 8));
-    }
 }
 
+fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, opts: &Opts, offset: i32) {
+    if offset == 0 {
+        emit.movsb(vr.tmpl, &Addr::B(vr.pc));
+    } else {
+        emit.movsb(vr.tmpl, &(vr.pc + offset))
+            .add(vr.pc, offset);
+    }
+
+    // Like PyPy's jit_merge_point
+    if opts.trace_on {
+        let rs = vr.regs();
+        for r in &rs {
+            emit.push(*r);
+        }
+
+        let mut moar_pops: Box<FnMut(&mut Emit)> = if rs.len() % 2 == 0 {
+            // Stack alignment
+            emit.push(rax);
+            Box::new(|emit| { emit.pop(rax); })
+        } else {
+            Box::new(|_| ())
+        };
+
+        emit.mov(rdi, vr.trace_ctx)
+            .mov(rsi, vr.pc)
+            .mov(rax, unsafe { mem::transmute::<_, i64>(TraceContext::record_unsafe) })
+            .call(rax);
+
+        moar_pops(emit);
+
+        for r in rs.iter().rev() {
+            emit.pop(*r);
+        }
+    }
+
+    emit.jmp(&(vr.dispatch_table + vr.tmpl * 8));
+}
 
 fn build_dispatch_skip_oparg(emit: &mut Emit, vr: &VMRegs, opts: &Opts) {
-    Op::build_dispatch_with_pc_offset(emit, vr, opts, 2)
+    build_dispatch_with_pc_offset(emit, vr, opts, 2)
 }
 
 fn build_dispatch_correct_pc(emit: &mut Emit, vr: &VMRegs, opts: &Opts) {
-    Op::build_dispatch_with_pc_offset(emit, vr, opts, 0)
+    build_dispatch_with_pc_offset(emit, vr, opts, 0)
 }
 
 
@@ -301,6 +341,10 @@ pub fn main(n: u8) {
     let mut opts = Opts::new();
     if env::var("NO_DUP_BR_TAILS").is_ok() {
         opts.duplicate_branch_op_tails = false;
+    };
+
+    if env::var("TRACE_ON").is_ok() {
+        opts.trace_on = true;
     };
 
     let (labels, jm) = build_interp(LAST_OP, &(VMRegs::new(), opts));
@@ -347,15 +391,25 @@ pub fn main(n: u8) {
 
     let trace_ctx = TraceContext::new();
 
+    let stack = [0_isize; 1024];
+
     let res = unsafe {
         let pc = main_code.as_ptr() as isize;
         let lbl_ptr = labels.as_ptr() as isize;
         let func_table_ptr = func_table.as_ptr() as isize;
         let trace_ctx_ptr = trace_ctx.as_ptr() as isize;
+        let stack_ptr = stack.as_ptr().offset(stack.len() as isize) as isize;
+        let ictx = InterpContext {
+            pc: pc,
+            func_table: func_table_ptr,
+            trace_ctx: trace_ctx_ptr,
+            dispatch_table: lbl_ptr,
+            sp: stack_ptr,
+        };
         if env::var("BREAK").is_ok() {
             breakpoint();
         }
-        jm.call_ptr6_ptr(pc, lbl_ptr, func_table_ptr, 0, 0, trace_ctx_ptr)
+        jm.call_ptr_ptr(&ictx as *const _ as isize)
     };
     println!("res = {}", res);
     println!("trace = {:?}", trace_ctx);
