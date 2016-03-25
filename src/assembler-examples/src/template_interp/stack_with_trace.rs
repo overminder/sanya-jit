@@ -75,6 +75,12 @@ const FT_OFFSET: i32 = 2 * 8;
 const TC_OFFSET: i32 = 3 * 8;
 const SP_OFFSET: i32 = 4 * 8;
 
+impl InterpContext {
+    fn build_unpack_to_reg(emit: &mut Emit, vr: &VMRegs) {
+        // TODO
+    }
+}
+
 #[derive(Debug)]
 struct Trace {
     bc_list: Vec<isize>,
