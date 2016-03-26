@@ -69,6 +69,7 @@ struct InterpContext {
     sp: isize,
 }
 
+// Can we have offsetof?
 const PC_OFFSET: i32 = 0;
 const DT_OFFSET: i32 = 1 * 8;
 const FT_OFFSET: i32 = 2 * 8;
@@ -76,8 +77,21 @@ const TC_OFFSET: i32 = 3 * 8;
 const SP_OFFSET: i32 = 4 * 8;
 
 impl InterpContext {
+    fn location_mapping(base: R64, vr: &VMRegs) -> Vec<(R64, Addr)>{
+        vec![
+            (vr.pc, base + PC_OFFSET),
+            (vr.dispatch_table, base + DT_OFFSET),
+            (vr.func_table, base + FT_OFFSET),
+            (vr.trace_ctx, base + TC_OFFSET),
+            (vr.sp, base + SP_OFFSET),
+        ]
+    }
+
     fn build_unpack_to_reg(emit: &mut Emit, vr: &VMRegs) {
         // TODO
+        for (r, m) in InterpContext::location_mapping(rdi, vr) {
+            emit.mov(r, &m);
+        }
     }
 }
 
