@@ -89,8 +89,18 @@ impl InterpContext {
 
     fn build_unpack_to_reg(emit: &mut Emit, vr: &VMRegs) {
         // TODO
+        let mut last_move: Option<Box<FnMut(&mut Emit)>> = None;
         for (r, m) in InterpContext::location_mapping(rdi, vr) {
-            emit.mov(r, &m);
+            if r == rdi {
+                last_move = Some(Box::new(move |emit| {
+                    emit.mov(r, &m);
+                }));
+            } else {
+                emit.mov(r, &m);
+            }
+        }
+        if let Some(mut f) = last_move {
+            f(emit);
         }
     }
 }
@@ -211,6 +221,10 @@ impl From<Op> for u8 {
 }
 
 impl Dispatchable<(VMRegs, Opts)> for Op {
+    fn build_interp_entry(emit: &mut Emit, args: &(VMRegs, Opts)) {
+        InterpContext::build_unpack_to_reg(emit, &args.0);
+    }
+
     fn build_dispatch_case(self, emit: &mut Emit, args: &(VMRegs, Opts)) {
         Op::build_dispatch_case(self, emit, &args.0, &args.1);
     }

@@ -270,6 +270,9 @@ impl Dispatchable<VMRegs> for Op {
     fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, offset: i32) {
         dispatch_next_pc_offset(emit, vr, offset);
     }
+
+    fn build_interp_entry(emit: &mut Emit, args: &VMRegs) {
+    }
 }
 
 pub fn main(n: u8) {

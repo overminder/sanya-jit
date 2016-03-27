@@ -10,6 +10,7 @@ extern "rust-intrinsic" {
 }
 
 pub trait Dispatchable<Opts>: Sized {
+    fn build_interp_entry(emit: &mut Emit, opts: &Opts);
     fn build_dispatch_case(self, emit: &mut Emit, opts: &Opts);
     fn build_dispatch_with_pc_offset(emit: &mut Emit, opts: &Opts, offset: i32);
 }
@@ -18,6 +19,8 @@ pub fn build_interp<Op, Opts>(last_op: Op, opts: &Opts) -> (Vec<usize>, JitMem)
     where Op: From<u8> + Dispatchable<Opts> + Debug, u8: From<Op>
 {
     let mut emit = Emit::new();
+
+    Op::build_interp_entry(&mut emit, opts);
 
     Op::build_dispatch_with_pc_offset(&mut emit, opts, 0);
     let mut offset_table = vec![0; 1 + u8::from(last_op) as usize];

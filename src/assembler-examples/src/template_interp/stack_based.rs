@@ -110,6 +110,9 @@ impl Dispatchable<(VMRegs, Opts)> for Op {
     fn build_dispatch_with_pc_offset(emit: &mut Emit, args: &(VMRegs, Opts), offset: i32) {
         Op::build_dispatch_with_pc_offset(emit, &args.0, offset);
     }
+
+    fn build_interp_entry(emit: &mut Emit, args: &(VMRegs, Opts)) {
+    }
 }
 
 impl Op {
