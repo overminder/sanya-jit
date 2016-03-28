@@ -159,7 +159,7 @@ impl TraceContext {
         }
     }
 
-    unsafe extern "C" fn record_unsafe(raw: *mut TraceContext, bc_ptr: isize) {
+    pub unsafe extern "C" fn record_unsafe(raw: *mut TraceContext, bc_ptr: isize) {
         (&mut *raw).record(bc_ptr);
     }
 }
@@ -344,8 +344,8 @@ fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, opts: &Opts, offs
             Box::new(|_| ())
         };
 
-        emit.mov(rdi, vr.trace_ctx)
-            .mov(rsi, vr.pc)
+        emit.mov(rsi, vr.pc)  // Since pc == rdi. XXX: hardcoded...
+            .mov(rdi, vr.trace_ctx)
             .mov(rax, unsafe { mem::transmute::<_, i64>(TraceContext::record_unsafe) })
             .call(rax);
 
