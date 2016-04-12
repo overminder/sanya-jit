@@ -6,6 +6,7 @@ use assembler::emit::{Emit, Label};
 use template_interp::shared::{Dispatchable, build_interp, breakpoint};
 
 use std::mem;
+use std::fmt::{self, Display};
 use std::env;
 use std::collections::HashSet;
 
@@ -111,6 +112,20 @@ struct Trace {
     bc_set: HashSet<isize>,
 }
 
+impl Display for Trace {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(fmt, "Trace {{ "));
+        for ptr in &self.bc_list {
+            unsafe {
+                try!(Op::display_ptr(*ptr, fmt));
+                try!(write!(fmt, " "));
+            }
+        }
+        try!(write!(fmt, "}}"));
+        Ok(())
+    }
+}
+
 impl Trace {
     fn new() -> Self {
         Trace {
@@ -134,6 +149,18 @@ impl Trace {
 struct TraceContext {
     current: Trace,
     traces: Vec<Trace>,
+}
+
+impl Display for TraceContext {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(fmt, "TraceContext {{ traces: "));
+        for trace in &self.traces {
+            try!(write!(fmt, "{} ", trace));
+        }
+        try!(write!(fmt, ", current: {} ", &self.current));
+        try!(write!(fmt, "}}"));
+        Ok(())
+    }
 }
 
 impl TraceContext {
@@ -237,6 +264,26 @@ impl Dispatchable<(VMRegs, Opts)> for Op {
 impl Op {
     fn from_u8(repr: u8) -> Self {
         unsafe { mem::transmute(repr) }
+    }
+
+    fn has_arg(self) -> bool {
+        use self::Op::*;
+
+        match self {
+            LoadI8 | LoadL | BranchLt | Call | Ret => true,
+            Halt | Add => false,
+        }
+    }
+
+    unsafe fn display_ptr(ptr: isize, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let bptr = ptr as *const u8;
+        let op = Op::from_u8(*bptr);
+        if op.has_arg() {
+            let oparg = *bptr.offset(1);
+            write!(fmt, "{:?}({})", op, oparg)
+        } else {
+            write!(fmt, "{:?}", op)
+        }
     }
 
     fn build_dispatch_case(self, emit: &mut Emit, vr: &VMRegs, opts: &Opts) {
@@ -385,13 +432,14 @@ pub fn main(n: u8) {
 
     let main_code = instr_to_bs(&[
         OpWithArg(LoadI8, n as i8),
-        OpWithArg(Call, 1),
+        OpWithArg(Call, 0),
         OpOnly(Halt),
     ]);
 
     let id_code = instr_to_bs(&[
-        OpWithArg(LoadL, 1),
-        OpWithArg(Ret, 1),
+        OpWithArg(LoadI8, 100),
+        //OpWithArg(Ret, 1),
+        OpOnly(Halt),
     ]);
 
     let fibo_code = instr_to_bs(&[
@@ -446,5 +494,5 @@ pub fn main(n: u8) {
         jm.call_ptr_ptr(&ictx as *const _ as isize)
     };
     println!("res = {}", res);
-    println!("trace = {:?}", trace_ctx);
+    println!("trace = {}", trace_ctx);
 }
