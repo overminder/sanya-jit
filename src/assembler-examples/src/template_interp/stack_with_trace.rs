@@ -217,7 +217,13 @@ impl VMRegs {
     }
 
     fn regs(&self) -> Vec<R64> {
-        vec![self.pc, self.dispatch_table, self.func_table, self.tmpr, self.tmpl, self.trace_ctx]
+        vec![self.pc,
+             self.dispatch_table,
+             self.func_table,
+             self.tmpr,
+             self.tmpl,
+             self.trace_ctx,
+             self.sp,]
     }
 }
 
@@ -385,8 +391,8 @@ fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, opts: &Opts, offs
 
         let mut moar_pops: Box<FnMut(&mut Emit)> = if rs.len() % 2 == 0 {
             // Stack alignment
-            emit.push(rax);
-            Box::new(|emit| { emit.pop(rax); })
+            emit.sub(rsp, 8);
+            Box::new(|emit| { emit.add(rsp, 8); })
         } else {
             Box::new(|_| ())
         };
@@ -432,7 +438,7 @@ pub fn main(n: u8) {
 
     let main_code = instr_to_bs(&[
         OpWithArg(LoadI8, n as i8),
-        OpWithArg(Call, 0),
+        //OpWithArg(Call, 0),
         OpOnly(Halt),
     ]);
 
