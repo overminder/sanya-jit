@@ -223,7 +223,8 @@ impl VMRegs {
              self.tmpr,
              self.tmpl,
              self.trace_ctx,
-             self.sp,]
+             self.sp,
+        ]
     }
 }
 
