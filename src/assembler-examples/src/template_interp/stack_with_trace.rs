@@ -8,7 +8,7 @@ use template_interp::shared::{Dispatchable, build_interp, breakpoint};
 use std::mem;
 use std::fmt::{self, Display};
 use std::env;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -106,19 +106,26 @@ impl InterpContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Eq, PartialEq)]
 struct Trace {
     bc_list: Vec<isize>,
-    bc_set: HashSet<isize>,
+    prefix: Vec<isize>,
 }
 
 impl Display for Trace {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(fmt, "Trace {{ "));
-        for ptr in &self.bc_list {
-            unsafe {
-                try!(Op::display_ptr(*ptr, fmt));
-                try!(write!(fmt, " "));
+        try!(write!(fmt, "Trace {{\n"));
+
+        for &(name, vs) in &[("prefix", &self.prefix), ("trace", &self.bc_list)] {
+            if let Some(first) = vs.get(0) {
+                try!(write!(fmt, "<{}>\n", name));
+                for ptr in vs {
+                    unsafe {
+                        try!(write!(fmt, "\t"));
+                        try!(Op::display_ptr(*ptr, *first, fmt));
+                        try!(write!(fmt, "\n"));
+                    }
+                }
             }
         }
         try!(write!(fmt, "}}"));
@@ -130,32 +137,37 @@ impl Trace {
     fn new() -> Self {
         Trace {
             bc_list: Default::default(),
-            bc_set: Default::default(),
+            prefix: Default::default(),
         }
     }
 
     // Returns false if this trace is finished.
     fn record(&mut self, bc_ptr: isize) -> bool {
-        self.bc_list.push(bc_ptr);
-        if self.bc_set.contains(&bc_ptr) {
-            return false;
+        if let Some(ix) = self.bc_list.iter().position(|x| *x == bc_ptr) {
+            let mut bc_list = vec![];
+            mem::swap(&mut bc_list, &mut self.bc_list);
+            let (prefix, trace) = bc_list.split_at(ix);
+            self.bc_list.extend(trace);
+            self.prefix.extend(prefix);
+            false
+        } else {
+            self.bc_list.push(bc_ptr);
+            true
         }
-        self.bc_set.insert(bc_ptr);
-        true
     }
 }
 
 #[derive(Debug)]
 struct TraceContext {
     current: Trace,
-    traces: Vec<Trace>,
+    traces: HashMap<Trace, usize>,
 }
 
 impl Display for TraceContext {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(fmt, "TraceContext {{ traces: "));
-        for trace in &self.traces {
-            try!(write!(fmt, "{} ", trace));
+        try!(write!(fmt, "TraceContext {{ traces:\n"));
+        for (i, (trace, count)) in self.traces.iter().enumerate() {
+            try!(write!(fmt, "Trace_{} ({} times):\n{}\n", i, count, trace));
         }
         try!(write!(fmt, ", current: {} ", &self.current));
         try!(write!(fmt, "}}"));
@@ -167,7 +179,7 @@ impl TraceContext {
     fn new() -> Box<Self> {
         Box::new(TraceContext {
             current: Trace::new(),
-            traces: vec![],
+            traces: Default::default(),
         })
     }
 
@@ -179,7 +191,7 @@ impl TraceContext {
         if !self.current.record(bc_ptr) {
             let mut new_trace = Trace::new();
             mem::swap(&mut self.current, &mut new_trace);
-            self.traces.push(new_trace);
+            *self.traces.entry(new_trace).or_insert(0) += 1;
 
             // Shall we record the trace bridge?
             self.record(bc_ptr);
@@ -282,14 +294,15 @@ impl Op {
         }
     }
 
-    unsafe fn display_ptr(ptr: isize, fmt: &mut fmt::Formatter) -> fmt::Result {
+    unsafe fn display_ptr(ptr: isize, base: isize, fmt: &mut fmt::Formatter) -> fmt::Result {
         let bptr = ptr as *const u8;
         let op = Op::from_u8(*bptr);
+        let offset = ptr - base;
         if op.has_arg() {
             let oparg = *bptr.offset(1);
-            write!(fmt, "{:?}({})", op, oparg)
+            write!(fmt, "{:6}: {:?}({})", offset, op, oparg as i8)
         } else {
-            write!(fmt, "{:?}", op)
+            write!(fmt, "{:6}: {:?}", offset, op)
         }
     }
 
@@ -439,14 +452,13 @@ pub fn main(n: u8) {
 
     let main_code = instr_to_bs(&[
         OpWithArg(LoadI8, n as i8),
-        //OpWithArg(Call, 0),
+        OpWithArg(Call, 1),
         OpOnly(Halt),
     ]);
 
     let id_code = instr_to_bs(&[
-        OpWithArg(LoadI8, 100),
-        //OpWithArg(Ret, 1),
-        OpOnly(Halt),
+        OpWithArg(LoadL, 1),
+        OpWithArg(Ret, 1),
     ]);
 
     let fibo_code = instr_to_bs(&[
@@ -501,5 +513,7 @@ pub fn main(n: u8) {
         jm.call_ptr_ptr(&ictx as *const _ as isize)
     };
     println!("res = {}", res);
-    println!("trace = {}", trace_ctx);
+    if env::var("SHOW_TRACE").is_ok() {
+        println!("trace = {}", trace_ctx);
+    }
 }
