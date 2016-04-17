@@ -413,7 +413,7 @@ fn build_dispatch_with_pc_offset(emit: &mut Emit, vr: &VMRegs, opts: &Opts, offs
 
         emit.mov(rsi, vr.pc)  // Since pc == rdi. XXX: hardcoded...
             .mov(rdi, vr.trace_ctx)
-            .mov(rax, unsafe { mem::transmute::<_, i64>(TraceContext::record_unsafe) })
+            .mov(rax, unsafe { mem::transmute::<_, i64>(TraceContext::record_unsafe as usize) })
             .call(rax);
 
         moar_pops(emit);
