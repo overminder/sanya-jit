@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-enum Op {
+pub enum Op {
     // stack.push(oparg_i8)
     LoadI8 = 0,
 
@@ -25,6 +25,10 @@ enum Op {
     // Callee clears the stack.
     // func_ix = oparg_u8; stack.push(pc); pc = func_table[oparg_u8]; locals = args
     Call,
+
+    // Function entry: adjusts the stack space.
+    // swap(top, stack[oparg_u8])
+    Enter,
 
     // res = stack.pop(); pc = stack.pop(); stack.pops(oparg_u8); stack.push(res)
     Ret,
@@ -289,7 +293,7 @@ impl Op {
         use self::Op::*;
 
         match self {
-            LoadI8 | LoadL | BranchLt | Call | Ret => true,
+            LoadI8 | LoadL | BranchLt | Call | Enter | Ret => true,
             Halt | Add => false,
         }
     }
@@ -366,11 +370,27 @@ impl Op {
                 emit.mov(vr.pc, &(vr.func_table + vr.tmpl * 8));
                 build_dispatch_correct_pc(emit, vr, opts);
             }
+            Enter => {
+                emit.movsb(vr.tmpl, &(vr.pc + 1))
+                    .add(vr.pc, 2);
+
+                let first_arg = vr.sp + vr.tmpl * 8;
+                let top = Addr::B(vr.sp);
+                emit.mov(vr.tmpr, &first_arg)
+                    .mov(vr.scratch, &top)
+                    .mov(&first_arg, vr.scratch)
+                    .mov(&top, vr.tmpr);
+                build_dispatch_correct_pc(emit, vr, opts);
+            }
             Ret => {
+                // tmpl: ret val
                 pop_r(emit, vr, vr.tmpl);
+
+                // tmpr: local vars to pop
                 emit.movsb(vr.tmpr, &(vr.pc + 1));
-                pop_r(emit, vr, vr.pc);
                 emit.lea(vr.sp, &(vr.sp + vr.tmpr * 8));
+
+                pop_r(emit, vr, vr.pc);
                 push_r(emit, vr, vr.tmpl);
                 build_dispatch_correct_pc(emit, vr, opts);
             }
@@ -457,22 +477,24 @@ pub fn main(n: u8) {
     ]);
 
     let id_code = instr_to_bs(&[
-        OpWithArg(LoadL, 1),
+        OpWithArg(Enter, 1),
+        OpWithArg(LoadL, 0),
         OpWithArg(Ret, 1),
     ]);
 
     let fibo_code = instr_to_bs(&[
-        OpWithArg(LoadL, 1),
+        OpWithArg(Enter, 1),
+        OpWithArg(LoadL, 0),
         OpWithArg(LoadI8, 2),
         OpWithArg(BranchLt, 17),
 
         // Recur case.
-        OpWithArg(LoadL, 1),
+        OpWithArg(LoadL, 0),
         OpWithArg(LoadI8, -1),
         OpOnly(Add),
         OpWithArg(Call, 1),
 
-        OpWithArg(LoadL, 2),
+        OpWithArg(LoadL, 1),
         OpWithArg(LoadI8, -2),
         OpOnly(Add),
         OpWithArg(Call, 1),
@@ -481,7 +503,7 @@ pub fn main(n: u8) {
         OpWithArg(Ret, 1),
 
         // Base case.
-        OpWithArg(LoadL, 1),
+        OpWithArg(LoadL, 0),
         OpWithArg(Ret, 1),
     ]);
 
