@@ -50,12 +50,21 @@ pub fn trace_to_node(ops: &[*const u8]) -> Stmt {
                 // - A ret paired with a call can be inlined
                 // - An unpaired call or ret means recursive activation
                 //   and should be treated differently.
-                let top = stack.pop().unwrap();
                 let nlocals = next_oparg(ops, &mut i) as usize;
-                for _ in 0..nlocals {
-                    stack.pop();
+                if stack.len() >= nlocals + 1 {
+                    // Should be paired
+                    for _ in 0..nlocals {
+                        stack.pop();
+                    }
+                    let top = stack.pop().unwrap();
+                    stmts.push(Stmt::Ret(top, nlocals as u8));
+                } else if stack.len() >= 1 {
+                    // Can only get the return value
+                    let top = stack.pop().unwrap();
+                    stmts.push(Stmt::Ret(top, nlocals as u8));
+                } else {
+                    // Nothing on the stack
                 }
-                stmts.push(Stmt::Ret(top, nlocals as u8));
             }
             Op::Add => {
                 let r = stack.pop().unwrap();
