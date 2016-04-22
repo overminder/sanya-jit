@@ -88,6 +88,9 @@ pub fn trace_to_node(ops: &[*const u8]) -> Stmt {
                 };
                 stmts.push(Stmt::BranchLt(r, l, pc_incr as i8, taken));
             }
+            Op::LoadL => {
+                // Have the same problem: the value might not be pushed in this trace...
+            }
             _ => {
                 panic!();
             }
