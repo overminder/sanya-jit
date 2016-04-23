@@ -91,8 +91,10 @@ pub fn trace_to_node(ops: &[*const u8]) -> Stmt {
             Op::LoadL => {
                 // Have the same problem: the value might not be pushed in this trace...
             }
-            _ => {
-                panic!();
+            Op::Call => {
+                let op_ptr = ops[i - 1];
+                let pc_incr = next_oparg(ops, &mut i) as isize;
+                // XXX: Consider using a saner calling convention...
             }
         }
     }
