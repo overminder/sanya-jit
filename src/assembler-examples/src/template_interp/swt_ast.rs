@@ -96,6 +96,9 @@ pub fn trace_to_node(ops: &[*const u8]) -> Stmt {
                 let pc_incr = next_oparg(ops, &mut i) as isize;
                 // XXX: Consider using a saner calling convention...
             }
+            Op::Enter => {
+                let nargs = next_oparg(ops, &mut i) as isize;
+            }
         }
     }
     Stmt::Seq(stmts)
