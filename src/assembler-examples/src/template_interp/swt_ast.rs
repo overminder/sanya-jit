@@ -99,6 +99,9 @@ pub fn trace_to_node(ops: &[*const u8]) -> Stmt {
             Op::Enter => {
                 let nargs = next_oparg(ops, &mut i) as isize;
             }
+            Op::Halt => {
+                panic!("Shouldn't happen in a trace");
+            }
         }
     }
     Stmt::Seq(stmts)
