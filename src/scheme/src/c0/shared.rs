@@ -33,7 +33,7 @@ impl Reloc {
 
         // XXX: Sync this with the oop defs.
         match self {
-            &Global(ref name) => true,
+            &Global(ref _name) => true,
             &Any(ref e) => {
                 match e {
                     &Bool(..) => false,

@@ -1,6 +1,3 @@
-#![feature(slice_patterns)]
-#![feature(intrinsics)]
-
 extern crate scheme;
 #[macro_use]
 extern crate log;
@@ -17,9 +14,12 @@ use std::env;
 use std::fs::File;
 use std::io::{self, stdin, stdout, Read, Write};
 
+#[cfg(intrinsics)]
 extern "rust-intrinsic" {
     fn breakpoint();
 }
+#[cfg(not(intrinsics))]
+fn breakpoint() { }
 
 fn read_file(path: &str) -> io::Result<String> {
     let mut s = String::new();
@@ -90,7 +90,7 @@ fn repl() -> io::Result<()> {
 }
 
 fn main() {
-    env_logger::init().unwrap();
+    env_logger::init();
 
     let args: Vec<String> = env::args().collect();
     let args_ref: Vec<&str> = args.iter().skip(1).map(|e| e.as_ref()).collect();

@@ -284,7 +284,7 @@ impl<'a> NodeCompiler<'a> {
         })
     }
 
-    fn compile_literal_node(&mut self, node: &LiteralNode, stackmap: StackMap) -> CgResult<()> {
+    fn compile_literal_node(&mut self, node: &LiteralNode, _stackmap: StackMap) -> CgResult<()> {
         match node {
             &LitAny(ref e) => {
                 self.load_reloc(rax, Reloc::Any(e.to_owned()));
@@ -328,7 +328,7 @@ impl<'a> NodeCompiler<'a> {
                     .mov(rsi, rax)
                     .pop(rdx);
                 self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                    emit.mov(rax, unsafe { transmute::<_, i64>(alloc_ooparray) })
+                    emit.mov(rax, alloc_ooparray as i64 )
                         .call(rax);
                 });
             }
@@ -345,7 +345,7 @@ impl<'a> NodeCompiler<'a> {
                     .mov(rsi, &(rax + 8))
                     .pop(rdx);
                 self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                    emit.mov(rax, unsafe { transmute::<_, i64>(alloc_i64array) })
+                    emit.mov(rax, alloc_i64array as i64 )
                         .call(rax);
                 });
             }
@@ -405,7 +405,7 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.mov(rdx, rsp);
 
                 self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
-                    emit.mov(rax, unsafe { transmute::<_, i64>(alloc_closure) })
+                    emit.mov(rax, alloc_closure as i64 )
                         .call(rax);
                 });
 
@@ -545,7 +545,7 @@ impl<'a> NodeCompiler<'a> {
 
                 // 2. Bind the uninitialized oops to their local names.
                 let mut alloc_ptr_offset = 0;
-                for (ith_node, &(ix, ref bn)) in bs.iter().enumerate() {
+                for (ith_node, &(ix, ref _bn)) in bs.iter().enumerate() {
                     self.emit
                         .lea(TMP, &(rax + alloc_ptr_offset as i32))
                         .mov(&frame_slot(ix), TMP);
@@ -554,7 +554,7 @@ impl<'a> NodeCompiler<'a> {
                 }
 
                 // 3. Initialize the oops.
-                for (ith_node, &(ix, ref bn)) in bs.iter().enumerate() {
+                for (ith_node, &(_ix, ref bn)) in bs.iter().enumerate() {
                     try!(self.compile_placement_init(bn));
 
                     // Not the last node: increase the offset.
@@ -565,7 +565,7 @@ impl<'a> NodeCompiler<'a> {
                 try!(self.compile(n, map0));
             }
             &NReadArrayLength(ref arr) => {
-                let mut map0 = stackmap;
+                let map0 = stackmap;
                 try!(self.compile(arr, map0));
                 self.emit.mov(TMP, &(rax + 8));
                 self.emit_fixnum_allocation(map0, TMP);
@@ -647,7 +647,7 @@ impl<'a> NodeCompiler<'a> {
                             .mov(rsi, UNIVERSE_PTR);
                         // Safe to use conv::internal since we don't alloc in display.
                         self.calling_out(stackmap, CallingConv::Internal, |emit| {
-                            emit.mov(rax, unsafe { transmute::<_, i64>(display_oop) })
+                            emit.mov(rax, display_oop as i64 )
                                 .call(rax);
                         });
                     }
@@ -658,7 +658,7 @@ impl<'a> NodeCompiler<'a> {
                         // Need to sync the universe since we will be unwinding
                         // the generated code's stack.
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(rax, unsafe { transmute::<_, i64>(panic) })
+                            emit.mov(rax, panic as i64)
                                 .call(rax);
                         });
                     }
@@ -678,7 +678,7 @@ impl<'a> NodeCompiler<'a> {
                             .mov(rsi, rax);
 
                         self.calling_out(stackmap, CallingConv::SyncUniverse, |emit| {
-                            emit.mov(rax, unsafe { transmute::<_, i64>(compile_module) })
+                            emit.mov(rax, compile_module as i64)
                                 .call(rax);
                         });
                     }
@@ -715,7 +715,7 @@ impl<'a> NodeCompiler<'a> {
             .mov(rdi, UNIVERSE_PTR)
             .mov(rsi, alloc_size as i64);
         self.calling_out(map0, CallingConv::SyncUniverse, |emit| {
-            emit.mov(rax, unsafe { transmute::<_, i64>(full_gc) })
+            emit.mov(rax, full_gc as i64 )
                 .call(rax);
         });
         for &(_, r) in tmp_regs.iter().rev() {

@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_gc_alloc() {
-        let mut u = Universe::new(0x180);
+        let u = Universe::new(0x180);
         assert_eq!(u.pair_info.sizeof_instance(), 0x18);
         for _ in 0..0x10000 {
             let _h = u.new_pair(NULL_OOP, NULL_OOP);
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_gc_scavenge() {
-        let mut u = Universe::new(0x200);
+        let u = Universe::new(0x200);
         let mut oops = vec![];
         assert_eq!(u.fixnum_info.sizeof_instance(), 0x10);
 
@@ -252,17 +252,17 @@ mod tests {
     #[test]
     fn test_ooparray() {
         let mut available_spaces = 0x200;
-        let mut u = Universe::new(available_spaces);
+        let u = Universe::new(available_spaces);
 
         let fxn = u.new_fixnum(0);
         available_spaces -= 0x10;
 
         available_spaces -= 0x10 + (0x8 * 10);
-        let arr = u.new_ooparray(10, &fxn);
+        let _arr = u.new_ooparray(10, &fxn);
         unsafe {
             assert_eq!(u.gc_mut().available_spaces(), available_spaces);
 
-            for i in 0..0x1000 {
+            for _i in 0..0x1000 {
                 let _h = u.new_ooparray(10, &fxn);
                 assert!(u.gc_mut().available_spaces() <= available_spaces);
             }
