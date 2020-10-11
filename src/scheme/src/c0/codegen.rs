@@ -248,7 +248,7 @@ impl<'a> NodeCompiler<'a> {
             &MkClosure(closure_id) => {
                 let sc = self.scs[&closure_id];
                 let npayloads = sc.frame_descr().upval_refs().len();
-                ((1 + npayloads) * 8)
+                (1 + npayloads) * 8
             }
             &MkBox(..) => 16,
         })

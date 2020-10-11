@@ -50,10 +50,10 @@ pub struct Universe {
 // XXX: Those should be unsafe.
 impl Universe {
     pub fn new(heap_size: usize) -> Box<Self> {
-        let empty_smt = box Default::default();
-        let empty_compiled_infos = box Default::default();
+        let empty_smt = Box::new( Default::default());
+        let empty_compiled_infos = Box::new( Default::default());
 
-        let res = box Universe {
+        let res = Box::new( Universe {
             invocation_chain: ptr::null(),
             gc: unsafe { UnsafeCell::new(GcState::new(heap_size)) },
             smt: &*empty_smt,
@@ -70,7 +70,7 @@ impl Universe {
 
             compiled_infos: &*empty_compiled_infos as *const _ as *mut _,
             empty_compiled_infos: empty_compiled_infos,
-        };
+        });
         unsafe {
             res.gc_mut().set_universe(&*res);
         }
@@ -211,7 +211,7 @@ impl Universe {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::oop::*;
+    
 
     #[test]
     fn test_gc_alloc() {

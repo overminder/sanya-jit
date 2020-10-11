@@ -339,7 +339,7 @@ fn is_heap_ptr(oop: Oop) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rt::oop::*;
+    
 
     #[test]
     fn test_alloc() {

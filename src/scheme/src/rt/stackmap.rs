@@ -1,7 +1,7 @@
 use super::oop::Oop;
 
-use fnv::{FnvHasher, FnvBuildHasher};
-use std::ptr;
+use fnv::{FnvBuildHasher};
+
 use std::mem::transmute;
 use std::collections::HashMap;
 

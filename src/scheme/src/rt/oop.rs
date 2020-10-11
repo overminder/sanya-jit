@@ -96,7 +96,7 @@ impl<A> InfoTable<A> {
             arity: arity,
             gc_mark_word: UnsafeCell::new(INFO_FRESH_TAG),
             kind: kind,
-            name: Some(box name.to_owned()),
+            name: Some(Box::new( name.to_owned())),
             gcrefs: Default::default(),
             smo: Default::default(),
             entry: [],
@@ -135,7 +135,7 @@ impl<A> InfoTable<A> {
     }
 
     pub fn set_smo(&mut self, smo: OopStackMapOffsets) {
-        self.smo = Some(box smo);
+        self.smo = Some(Box::new( smo));
     }
 
     pub fn gc_mark_word(&self) -> &mut usize {
@@ -492,7 +492,7 @@ impl<A> RawHandle<A> {
     }
 
     pub unsafe fn dup(&self) -> Box<Self> {
-        RawHandle::<A>::new(*self.oop() as *mut _, (&*self.as_ptr()))
+        RawHandle::<A>::new(*self.oop() as *mut _, &*self.as_ptr())
     }
 }
 
