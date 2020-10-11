@@ -7,20 +7,20 @@ use super::nir::AllocNode::*;
 use super::nir::LiteralNode::*;
 
 fn unwrap_sym_list(e: &SExpr) -> CompileResult<Vec<Id>> {
-    let es = try!(e.unwrap_list());
+    let es = e.unwrap_list()?;
     let mut res = vec![];
     for e in es {
-        res.push(Id::named(try!(e.unwrap_sym())));
+        res.push(Id::named(e.unwrap_sym()?));
     }
     Ok(res)
 }
 
 fn unwrap_bindings(e: &SExpr) -> CompileResult<Vec<(Id, &SExpr)>> {
-    let es = try!(e.unwrap_list());
+    let es = e.unwrap_list()?;
     let mut res = vec![];
     for e in es {
-        let b = try!(e.unwrap_list());
-        res.push((Id::named(try!(b[0].unwrap_sym())), &b[1]));
+        let b = e.unwrap_list()?;
+        res.push((Id::named(b[0].unwrap_sym()?), &b[1]));
     }
     Ok(res)
 }
@@ -29,7 +29,7 @@ pub fn compile_sc(es: &[SExpr]) -> CompileResult<Vec<ScDefn>> {
     let mut ctx = Context::new();
 
     for e in es {
-        let sc = try!(ctx.compile_sc(e));
+        let sc = ctx.compile_sc(e)?;
         ctx.add_sc(sc);
     }
     Ok(ctx.0)
@@ -37,7 +37,7 @@ pub fn compile_sc(es: &[SExpr]) -> CompileResult<Vec<ScDefn>> {
 
 pub fn compile_expr(e: &SExpr) -> CompileResult<(RawNode, Vec<ScDefn>)> {
     let mut ctx = Context::new();
-    let node = try!(ctx.compile_expr(e, &mut FrameDescrChain::new(), true));
+    let node = ctx.compile_expr(e, &mut FrameDescrChain::new(), true)?;
     Ok((node, ctx.0))
 }
 
@@ -63,10 +63,10 @@ impl Context {
                                                                      form[0] == sym("lambda") &&
                                                                      form[1].is_list() => {
                         let mut fdc = FrameDescrChain::new();
-                        Ok(try!(self.compile_lambda(Id::named(name),
-                                                    &form[1],
-                                                    &form[2..],
-                                                    &mut fdc))
+                        Ok(self.compile_lambda(Id::named(name),
+                                               &form[1],
+                                               &form[2..],
+                                               &mut fdc)?
                                .into_sc(fdc.into_current()))
                     }
                     _ => Err(format!("Not a valid ScDefn: {:?}", e)),
@@ -82,7 +82,7 @@ impl Context {
                       body: &[SExpr],
                       fdc: &mut FrameDescrChain)
                       -> CompileResult<Lambda> {
-        let args = try!(unwrap_sym_list(args));
+        let args = unwrap_sym_list(args)?;
         let arg_nodes: Vec<(usize, RawNode)> = args.iter()
                                                    .enumerate()
                                                    .map(|(nth_arg, name)| {
@@ -91,7 +91,7 @@ impl Context {
                                                        (local_ix, NReadArgument(nth_arg))
                                                    })
                                                    .collect();
-        let body = try!(self.compile_expr_seq(body, fdc, true));
+        let body = self.compile_expr_seq(body, fdc, true)?;
         Ok(Lambda(name, args, NBindLocal(arg_nodes, Box::new(body.into_nseq()))))
     }
 
@@ -111,63 +111,63 @@ impl Context {
                     //    NWriteLocal(ix, form)
                     // }
                     [Sym(ref tag), ref arr, ref ix] if tag == "nth#" => {
-                        NReadOopArray(Box::new(try!(self.compile_expr(arr, fdc, false))),
-                                      Box::new(try!(self.compile_expr(ix, fdc, false))))
+                        NReadOopArray(Box::new(self.compile_expr(arr, fdc, false)?),
+                                      Box::new(self.compile_expr(ix, fdc, false)?))
                     }
                     [Sym(ref tag), ref arr, ref ix] if tag == "nth-i64#" => {
-                        NReadI64Array(Box::new( try!(self.compile_expr(arr, fdc, false))),
-                                      Box::new( try!(self.compile_expr(ix, fdc, false))))
+                        NReadI64Array(Box::new(self.compile_expr(arr, fdc, false)?),
+                                      Box::new(self.compile_expr(ix, fdc, false)?))
                     }
                     [Sym(ref tag), ref arr, ref ix, ref val] if tag == "set-nth!#" => {
-                        NWriteOopArray(Box::new( try!(self.compile_expr(arr, fdc, false))),
-                                       Box::new( try!(self.compile_expr(ix, fdc, false))),
-                                       Box::new( try!(self.compile_expr(val, fdc, false))))
+                        NWriteOopArray(Box::new(self.compile_expr(arr, fdc, false)?),
+                                       Box::new(self.compile_expr(ix, fdc, false)?),
+                                       Box::new(self.compile_expr(val, fdc, false)?))
                     }
                     [Sym(ref tag), ref arr, ref ix, ref val] if tag == "set-nth-i64!#" => {
-                        NWriteI64Array(Box::new(try!(self.compile_expr(arr, fdc, false))),
-                                       Box::new(try!(self.compile_expr(ix, fdc, false))),
-                                       Box::new(try!(self.compile_expr(val, fdc, false))))
+                        NWriteI64Array(Box::new(self.compile_expr(arr, fdc, false)?),
+                                       Box::new(self.compile_expr(ix, fdc, false)?),
+                                       Box::new(self.compile_expr(val, fdc, false)?))
                     }
                     [Sym(ref tag), ref arr] if tag == "len#" => {
                         // Generic array length.
-                        NReadArrayLength(Box::new(try!(self.compile_expr(arr, fdc, false))))
+                        NReadArrayLength(Box::new(self.compile_expr(arr, fdc, false)?))
                     }
                     [Sym(ref tag), ref len, ref fill] if tag == "mk-arr#" => {
-                        NAlloc(MkOopArray(Box::new( try!(self.compile_expr(len, fdc, false))),
-                                          Box::new( try!(self.compile_expr(fill, fdc, false)))))
+                        NAlloc(MkOopArray(Box::new(self.compile_expr(len, fdc, false)?),
+                                          Box::new(self.compile_expr(fill, fdc, false)?)))
                     }
                     [Sym(ref tag), ref len, ref fill] if tag == "mk-arr-i64#" => {
-                        NAlloc(MkI64Array(Box::new(try!(self.compile_expr(len, fdc, false))),
-                                          Box::new(try!(self.compile_expr(fill, fdc, false)))))
+                        NAlloc(MkI64Array(Box::new(self.compile_expr(len, fdc, false)?),
+                                          Box::new(self.compile_expr(fill, fdc, false)?)))
                     }
                     [Sym(ref tag), ref car, ref cdr] if tag == "cons#" => {
-                        NAlloc(MkPair(Box::new(try!(self.compile_expr(car, fdc, false))),
-                                      Box::new(try!(self.compile_expr(cdr, fdc, false)))))
+                        NAlloc(MkPair(Box::new(self.compile_expr(car, fdc, false)?),
+                                      Box::new(self.compile_expr(cdr, fdc, false)?)))
                     }
                     [Sym(ref tag), ref e1] if as_prim_o_op(tag).is_some() => {
                         NPrimO(as_prim_o_op(tag).unwrap(),
-                               Box::new( try!(self.compile_expr(e1, fdc, false))))
+                               Box::new(self.compile_expr(e1, fdc, false)?))
                     }
                     [Sym(ref tag), ref val] if tag == "mk-box#" => {
-                        NAlloc(MkBox(Box::new( try!(self.compile_expr(val, fdc, false)))))
+                        NAlloc(MkBox(Box::new(self.compile_expr(val, fdc, false)?)))
                     }
                     [Sym(ref tag), ref loc] if tag == "unwrap-box#" => {
-                        NReadBox(Box::new( try!(self.compile_expr(loc, fdc, false))))
+                        NReadBox(Box::new(self.compile_expr(loc, fdc, false)?))
                     }
                     [Sym(ref tag), ref loc, ref val] if tag == "set-box!#" => {
-                        NWriteBox(Box::new( try!(self.compile_expr(loc, fdc, false))),
-                                  Box::new( try!(self.compile_expr(val, fdc, false))))
+                        NWriteBox(Box::new(self.compile_expr(loc, fdc, false)?),
+                                  Box::new(self.compile_expr(val, fdc, false)?))
                     }
                     [Sym(ref tag), ref e1, ref e2] if as_prim_ff_op(tag).is_some() => {
-                        let n1 = try!(self.compile_expr(e1, fdc, false));
-                        let n2 = try!(self.compile_expr(e2, fdc, false));
+                        let n1 = self.compile_expr(e1, fdc, false)?;
+                        let n2 = self.compile_expr(e2, fdc, false)?;
                         let op = as_prim_ff_op(tag).unwrap();
                         NPrimFF(op, Box::new( n1), Box::new( n2))
                     }
                     [Sym(ref tag), ref e1, ref e2, ref e3] if tag == "if" => {
-                        let n1 = try!(self.compile_expr(e1, fdc, false));
-                        let n2 = try!(self.compile_expr(e2, fdc, tail));
-                        let n3 = try!(self.compile_expr(e3, fdc, tail));
+                        let n1 = self.compile_expr(e1, fdc, false)?;
+                        let n2 = self.compile_expr(e2, fdc, tail)?;
+                        let n3 = self.compile_expr(e3, fdc, tail)?;
                         new_if(n1, n2, n3)
                     }
                     [] => {
@@ -177,15 +177,15 @@ impl Context {
                         // Special forms.
                         if let &Sym(ref tag) = &es[0] {
                             if tag == "begin" {
-                                return Ok(try!(self.compile_expr_seq(&es[1..], fdc, tail))
+                                return Ok(self.compile_expr_seq(&es[1..], fdc, tail)?
                                               .into_nseq());
                             } else if tag == "quote" && es.len() == 2 {
                                 // XXX: Constant.
                                 return Ok(NLit(LitAny(es[1].to_owned())));
                             } else if tag == "and" && es.len() == 3 {
                                 return Ok(NIf {
-                                    cond: Box::new(try!(self.compile_expr(&es[1], fdc, false))),
-                                    on_true: Box::new(try!(self.compile_expr(&es[2], fdc, tail))),
+                                    cond: Box::new(self.compile_expr(&es[1], fdc, false)?),
+                                    on_true: Box::new(self.compile_expr(&es[2], fdc, tail)?),
                                     on_false: Box::new(NLit(LitAny(Bool(false)))),
                                 });
                             } else if tag == "lambda" {
@@ -195,12 +195,12 @@ impl Context {
                                                         &es[2..],
                                                         &mut new_chain)
                                 });
-                                let lam = try!(mb_lam);
+                                let lam = mb_lam?;
                                 let name = lam.name();
                                 self.add_sc(lam.into_sc(frame));
                                 return Ok(NAlloc(MkClosure(name)));
                             } else if tag == "letrec" {
-                                let bs = try!(unwrap_bindings(&es[1]));
+                                let bs = unwrap_bindings(&es[1])?;
 
                                 // Make names.
                                 let ixs: Vec<usize> = bs.iter()
@@ -212,7 +212,7 @@ impl Context {
                                 // And allocate closures.
                                 let mut ns = vec![];
                                 for &(_, ref e) in &bs {
-                                    let n = try!(self.compile_expr(e, fdc, false));
+                                    let n = self.compile_expr(e, fdc, false)?;
                                     ns.push(match n {
                                         NAlloc(n) => n,
                                         _ => {
@@ -223,7 +223,7 @@ impl Context {
                                     });
                                 }
 
-                                let body = try!(self.compile_expr_seq(&es[2..], fdc, tail))
+                                let body = self.compile_expr_seq(&es[2..], fdc, tail)?
                                                .into_nseq();
 
                                 return Ok(NRecBindLocal(ixs.into_iter()
@@ -232,26 +232,26 @@ impl Context {
                                                         Box::new( body)));
                             } else if tag == "let*" {
                                 // Just a sequence of defines.
-                                let bs = try!(unwrap_bindings(&es[1]));
+                                let bs = unwrap_bindings(&es[1])?;
                                 let mut bs_ = vec![];
                                 for &(name, ref e) in &bs {
-                                    let n = try!(self.compile_expr(e, fdc, false));
+                                    let n = self.compile_expr(e, fdc, false)?;
                                     let ix = fdc.create_local_slot(name);
                                     bs_.push((ix, n));
                                 }
 
-                                let body = try!(self.compile_expr_seq(&es[2..], fdc, tail))
+                                let body = self.compile_expr_seq(&es[2..], fdc, tail)?
                                                .into_nseq();
 
                                 return Ok(NBindLocal(bs_, Box::new( body)));
                             } else if tag == "let" {
-                                let bs = try!(unwrap_bindings(&es[1]));
+                                let bs = unwrap_bindings(&es[1])?;
                                 // Independently evaluate the bindees, and
                                 // expand the env with all the names at once,
                                 // before evaluating the body.
                                 let mut ns = vec![];
                                 for &(_, ref e) in &bs {
-                                    let n = try!(self.compile_expr(e, fdc, false));
+                                    let n = self.compile_expr(e, fdc, false)?;
                                     ns.push(n);
                                 }
 
@@ -259,13 +259,13 @@ impl Context {
                                             .map(|&(name, _)| fdc.create_local_slot(name))
                                             .zip(ns.into_iter())
                                             .collect();
-                                let body = try!(self.compile_expr_seq(&es[2..], fdc, tail))
+                                let body = self.compile_expr_seq(&es[2..], fdc, tail)?
                                                .into_nseq();
 
                                 return Ok(NBindLocal(bs_, Box::new( body)));
                             }
                         }
-                        let func = try!(self.compile_expr(&es[0], fdc, false));
+                        let func = self.compile_expr(&es[0], fdc, false)?;
                         let args = es[1..]
                                        .iter()
                                        .map(|e| self.compile_expr(e, fdc, false).unwrap())
@@ -294,9 +294,9 @@ impl Context {
         }
         let mut body = vec![];
         for e in &es[..es.len() - 1] {
-            body.push(try!(self.compile_expr(e, fdc, false)));
+            body.push(self.compile_expr(e, fdc, false)?);
         }
-        let last = try!(self.compile_expr(es.last().unwrap(), fdc, tail));
+        let last = self.compile_expr(es.last().unwrap(), fdc, tail)?;
         Ok(NSeq0(body, last))
     }
 }

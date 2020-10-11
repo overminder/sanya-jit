@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use super::naive_copying::GcState as Space;
 use rt::Universe;
 

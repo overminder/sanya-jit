@@ -69,7 +69,7 @@ fn parse_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
         *i += 1;
         match x {
             '(' => return parse_list_at(xs, i),
-            '\'' => return Ok(quoted("quote", try!(parse_at(xs, i)))),
+            '\'' => return Ok(quoted("quote", parse_at(xs, i)?)),
             ';' => {
                 skip_this_line(xs, i);
                 continue;
@@ -152,7 +152,7 @@ fn parse_list_at(xs: &[char], i: &mut usize) -> ParseResult<SExpr> {
             _ if x.is_whitespace() => continue,
             _ => {
                 *i -= 1;
-                res.push(try!(parse_at(xs, i)));
+                res.push(parse_at(xs, i)?);
             }
         }
     }

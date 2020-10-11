@@ -230,9 +230,13 @@ impl Frame {
 }
 
 pub const OFFSET_OF_ICHAIN_NEXT: i32 = 0;
-pub const OFFSET_OF_ICHAIN_BASE_rbp: i32 = 8;
-pub const OFFSET_OF_ICHAIN_TOP_rbp: i32 = 16;
-pub const OFFSET_OF_ICHAIN_TOP_RIP: i32 = 24;
+mod consts {
+    #![allow(non_upper_case_globals)]
+    pub const OFFSET_OF_ICHAIN_BASE_rbp: i32 = 8;
+    pub const OFFSET_OF_ICHAIN_TOP_rbp: i32 = 16;
+    pub const OFFSET_OF_ICHAIN_TOP_rip: i32 = 24;
+}
+pub use self::consts::*;
 
 // A linked list of Rust->Native->Rust calls.
 // This is used to traverse the native stacks and thus ensure the

@@ -12,7 +12,7 @@ pub fn lint_scdefns(defns: &mut [ScDefn]) -> Result<(), String> {
 
     let mut checker = CheckGlobal(&toplevel_names);
     for defn in defns {
-        try!(defn.body_mut().traverse(&mut checker));
+        defn.body_mut().traverse(&mut checker)?;
     }
     Ok(())
 }

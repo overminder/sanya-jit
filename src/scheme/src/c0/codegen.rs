@@ -15,7 +15,7 @@ use assembler::x64::R64::*;
 use assembler::emit::{Emit, Label};
 
 use std::collections::HashMap;
-use std::mem::{transmute, size_of};
+use std::mem::{size_of};
 
 pub struct CompiledModule {
     pub emit: Emit,
@@ -187,7 +187,7 @@ impl<'a> NodeCompiler<'a> {
                 .mov(&universe_alloc_ptr(), ALLOC_PTR)
                 .mov(TMP, &universe_invocation_chain())
                 .lea(TMP2, &mut label_ret_addr)
-                .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_RIP), TMP2)
+                .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_rip), TMP2)
                 .mov(&(TMP + OFFSET_OF_ICHAIN_TOP_rbp), rbp);
         }
 
@@ -304,9 +304,9 @@ impl<'a> NodeCompiler<'a> {
             //
             &MkPair(ref car, ref cdr) => {
                 let mut map0 = stackmap;
-                try!(self.compile(cdr, map0));
+                self.compile(cdr, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(car, map0));
+                self.compile(car, map0)?;
                 self.emit.mov(TMP, rax);
                 self.emit_allocation(map0,
                                      self.universe.pair_info.sizeof_instance() as i32,
@@ -320,9 +320,9 @@ impl<'a> NodeCompiler<'a> {
             }
             &MkOopArray(ref len, ref fill) => {
                 let mut precall_map = stackmap;
-                try!(self.compile(fill, precall_map));
+                self.compile(fill, precall_map)?;
                 self.push_oop(rax, &mut precall_map);
-                try!(self.compile(len, precall_map));
+                self.compile(len, precall_map)?;
                 self.emit
                     .mov(rdi, UNIVERSE_PTR)
                     .mov(rsi, rax)
@@ -334,10 +334,10 @@ impl<'a> NodeCompiler<'a> {
             }
             &MkI64Array(ref len, ref fill) => {
                 let mut precall_map = stackmap;
-                try!(self.compile(fill, precall_map));
+                self.compile(fill, precall_map)?;
                 // unbox and push `fill`
                 self.push_word(&(rax + 8), &mut precall_map);
-                try!(self.compile(len, precall_map));
+                self.compile(len, precall_map)?;
                 // rsi: unboxed `len`
                 // rdx: `fill`
                 self.emit
@@ -413,7 +413,7 @@ impl<'a> NodeCompiler<'a> {
                 self.emit.add(rsp, 8 * npayloads as i32);
             }
             &MkBox(ref n) => {
-                try!(self.compile(n, stackmap));
+                self.compile(n, stackmap)?;
                 self.emit.mov(TMP, rax);
                 self.emit_allocation(stackmap,
                                      self.universe.box_info.sizeof_instance() as i32,
@@ -430,20 +430,20 @@ impl<'a> NodeCompiler<'a> {
     fn compile(&mut self, node: &RawNode, stackmap: StackMap) -> CgResult<()> {
         match node {
             &NLit(ref lit) => {
-                try!(self.compile_literal_node(lit, stackmap));
+                self.compile_literal_node(lit, stackmap)?;
             }
             &NAlloc(ref alloc) => {
-                try!(self.compile_alloc_node(alloc, stackmap));
+                self.compile_alloc_node(alloc, stackmap)?;
             }
             &NReadBox(ref n) => {
-                try!(self.compile(n, stackmap));
+                self.compile(n, stackmap)?;
                 self.emit.mov(rax, &(rax + 8));
             }
             &NWriteBox(ref n, ref v) => {
                 let mut map0 = stackmap;
-                try!(self.compile(v, map0));
+                self.compile(v, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(n, map0));
+                self.compile(n, map0)?;
                 self.emit
                     .pop(TMP)
                     .mov(&(rax + 8), TMP);
@@ -452,11 +452,11 @@ impl<'a> NodeCompiler<'a> {
                 let mut precall_map = stackmap;
                 // Eval args in the reverse order
                 for arg in args.iter().rev() {
-                    try!(self.compile(arg, precall_map));
+                    self.compile(arg, precall_map)?;
                     self.push_oop(rax, &mut precall_map);
                 }
                 // Eval func
-                try!(self.compile(func, precall_map));
+                self.compile(func, precall_map)?;
                 self.emit.mov(CLOSURE_PTR, rax);
 
                 for (r, _) in ARG_REGS.iter().zip(args.iter()) {
@@ -483,13 +483,13 @@ impl<'a> NodeCompiler<'a> {
                 let mut label_done = Label::new();
 
                 let special_case = if OPTIMIZE_IF_CMP {
-                    try!(self.emit_optimized_if_cmp(cond.as_ref(), &mut label_false, stackmap))
+                    self.emit_optimized_if_cmp(cond.as_ref(), &mut label_false, stackmap)?
                 } else {
                     false
                 };
 
                 if !special_case {
-                    try!(self.compile(cond, stackmap));
+                    self.compile(cond, stackmap)?;
 
                     self.load_reloc(TMP, Reloc::of_bool(false));
                     self.emit
@@ -497,19 +497,19 @@ impl<'a> NodeCompiler<'a> {
                         .je(&mut label_false);
                 }
 
-                try!(self.compile(on_true, stackmap));
+                self.compile(on_true, stackmap)?;
                 self.emit
                     .jmp(&mut label_done)
                     .bind(&mut label_false);
 
-                try!(self.compile(on_false, stackmap));
+                self.compile(on_false, stackmap)?;
                 self.emit.bind(&mut label_done);
             }
             &NSeq(ref body, ref last) => {
                 for n in body {
-                    try!(self.compile(n, stackmap));
+                    self.compile(n, stackmap)?;
                 }
-                try!(self.compile(last, stackmap));
+                self.compile(last, stackmap)?;
             }
             &NReadArgument(arg_ix) => {
                 self.emit.mov(rax, ARG_REGS[arg_ix]);
@@ -528,17 +528,17 @@ impl<'a> NodeCompiler<'a> {
             &NBindLocal(ref bs, ref n) => {
                 let mut map0 = stackmap;
                 for &(ix, ref bn) in bs {
-                    try!(self.compile(bn, map0));
+                    self.compile(bn, map0)?;
                     self.emit.mov(&frame_slot(ix), rax);
                     map0.set_local_slot(ix, true);
                 }
-                try!(self.compile(n, map0));
+                self.compile(n, map0)?;
             }
             &NRecBindLocal(ref bs, ref n) => {
                 let mut map0 = stackmap;
-                let alloc_sizes = try!(sequence_v(bs.iter()
+                let alloc_sizes = sequence_v(bs.iter()
                     .map(|&(_, ref n)| self.sizeof_alloc(n))
-                    .collect()));
+                    .collect())?;
                 let total_alloc_size: usize = alloc_sizes.iter().sum();
                 // 1. Alloc all oops at once.
                 self.emit_allocation(map0, total_alloc_size as i32, &[]);
@@ -555,26 +555,26 @@ impl<'a> NodeCompiler<'a> {
 
                 // 3. Initialize the oops.
                 for (ith_node, &(_ix, ref bn)) in bs.iter().enumerate() {
-                    try!(self.compile_placement_init(bn));
+                    self.compile_placement_init(bn)?;
 
                     // Not the last node: increase the offset.
                     if ith_node != bs.len() - 1 {
                         self.emit.add(rax, alloc_sizes[ith_node] as i32);
                     }
                 }
-                try!(self.compile(n, map0));
+                self.compile(n, map0)?;
             }
             &NReadArrayLength(ref arr) => {
                 let map0 = stackmap;
-                try!(self.compile(arr, map0));
+                self.compile(arr, map0)?;
                 self.emit.mov(TMP, &(rax + 8));
                 self.emit_fixnum_allocation(map0, TMP);
             }
             &NReadOopArray(ref arr, ref ix) => {
                 let mut map0 = stackmap;
-                try!(self.compile(ix, map0));
+                self.compile(ix, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(arr, map0));
+                self.compile(arr, map0)?;
                 self.emit
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
@@ -582,9 +582,9 @@ impl<'a> NodeCompiler<'a> {
             }
             &NReadI64Array(ref arr, ref ix) => {
                 let mut map0 = stackmap;
-                try!(self.compile(ix, map0));
+                self.compile(ix, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(arr, map0));
+                self.compile(arr, map0)?;
                 self.emit
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
@@ -592,11 +592,11 @@ impl<'a> NodeCompiler<'a> {
             }
             &NWriteOopArray(ref arr, ref ix, ref val) => {
                 let mut map0 = stackmap;
-                try!(self.compile(val, map0));
+                self.compile(val, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(ix, map0));
+                self.compile(ix, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(arr, map0));
+                self.compile(arr, map0)?;
                 self.emit
                     .pop(TMP)
                     .mov(TMP, &(TMP + 8))
@@ -606,9 +606,9 @@ impl<'a> NodeCompiler<'a> {
             }
             &NPrimFF(op, ref n1, ref n2) => {
                 let mut map0 = stackmap;
-                try!(self.compile(n2, map0));
+                self.compile(n2, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(n1, map0));
+                self.compile(n1, map0)?;
 
                 // Unbox the lhs to rax and pop the rhs to TMP.
                 self.emit
@@ -639,7 +639,7 @@ impl<'a> NodeCompiler<'a> {
                 self.emit_fixnum_allocation(map0, TMP);
             }
             &NPrimO(ref op, ref n1) => {
-                try!(self.compile(n1, stackmap));
+                self.compile(n1, stackmap)?;
                 match *op {
                     PrimOpO::Display => {
                         self.emit
@@ -751,9 +751,9 @@ impl<'a> NodeCompiler<'a> {
                              -> CgResult<bool> {
         Ok(match node {
             &NPrimFF(op, ref lhs, ref rhs) if op_is_cond(op) => {
-                try!(self.compile(rhs, map0));
+                self.compile(rhs, map0)?;
                 self.push_oop(rax, &mut map0);
-                try!(self.compile(lhs, map0));
+                self.compile(lhs, map0)?;
                 self.emit
                     .mov(rax, &(rax + 8))
                     .pop(TMP)
@@ -763,7 +763,7 @@ impl<'a> NodeCompiler<'a> {
                 true
             }
             &NPrimO(PrimOpO::Fixnump, ref rand) => {
-                try!(self.compile(rand, map0));
+                self.compile(rand, map0)?;
                 self.emit
                     .mov(TMP, self.universe.fixnum_info.entry_word() as i64)
                     .cmp(TMP, &Addr::B(rax))
@@ -869,7 +869,7 @@ pub fn make_rust_entry(emit: &mut Emit) -> (usize, usize) {
         .mov(&(rsp + OFFSET_OF_ICHAIN_BASE_rbp), rbp)
         .mov(TMP, 0_i64)
         .mov(&(rsp + OFFSET_OF_ICHAIN_TOP_rbp), TMP)
-        .mov(&(rsp + OFFSET_OF_ICHAIN_TOP_RIP), TMP)
+        .mov(&(rsp + OFFSET_OF_ICHAIN_TOP_rip), TMP)
         .mov(&universe_invocation_chain(), rsp);
 
     // Enter the real main.
@@ -902,7 +902,7 @@ pub fn make_rust_entry(emit: &mut Emit) -> (usize, usize) {
 fn sequence_v<A, E>(xs: Vec<Result<A, E>>) -> Result<Vec<A>, E> {
     let mut ys = vec![];
     for x in xs {
-        ys.push(try!(x));
+        ys.push(x?);
     }
     Ok(ys)
 }

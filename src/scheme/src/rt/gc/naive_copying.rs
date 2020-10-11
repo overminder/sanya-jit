@@ -48,7 +48,7 @@ unsafe fn was_scavenged_to(oop: &Closure) -> Option<Oop> {
 impl GcState {
     pub unsafe fn new(space_size: usize) -> Self {
         let heap = vec![0; space_size * 2];
-        let from_space = heap.as_ptr() as *mut _;
+        let from_space = heap.as_ptr() as *mut u8;
         let to_space = from_space.offset(space_size as isize);
         GcState {
             _heap: heap,

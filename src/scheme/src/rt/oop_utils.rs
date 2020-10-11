@@ -8,55 +8,55 @@ use std::fmt::{self, Formatter, Display};
 
 unsafe fn fmt_oop(oop: Oop, u: &Universe, fmt: &mut Formatter) -> fmt::Result {
     if oop == NULL_OOP {
-        try!(write!(fmt, "<null>"));
+        write!(fmt, "<null>")?;
     } else if Singleton::is_singleton(oop) {
-        try!(write!(fmt, "{:?}", Singleton::from_oop(oop).unwrap()));
+        write!(fmt, "{:?}", Singleton::from_oop(oop).unwrap())?;
     } else if u.oop_is_fixnum(oop) {
         let i = Fixnum::from_raw(oop);
-        try!(write!(fmt, "{}", i.value()));
+        write!(fmt, "{}", i.value())?;
     } else if u.oop_is_pair(oop) {
         let mut p = Pair::from_raw(oop);
-        try!(write!(fmt, "({}", FmtOop(p.car, u)));
+        write!(fmt, "({}", FmtOop(p.car, u))?;
         while u.oop_is_pair(p.cdr) {
             p = Pair::from_raw(p.cdr);
-            try!(write!(fmt, " {}", FmtOop(p.car, u)));
+            write!(fmt, " {}", FmtOop(p.car, u))?;
         }
         if Singleton::is_nil(p.cdr) {
-            try!(write!(fmt, ")"));
+            write!(fmt, ")")?;
         } else {
-            try!(write!(fmt, " . {})", FmtOop(p.cdr, u)));
+            write!(fmt, " . {})", FmtOop(p.cdr, u))?;
         }
     } else if u.oop_is_symbol(oop) {
         let s = Symbol::from_raw(oop);
-        try!(write!(fmt, "{}", s.as_str()));
+        write!(fmt, "{}", s.as_str())?;
     } else if u.oop_is_closure(oop) {
         let clo = Closure::from_raw(oop);
-        try!(write!(fmt, "<Closure {} @{:#x}>", clo.info().name(), oop));
+        write!(fmt, "<Closure {} @{:#x}>", clo.info().name(), oop)?;
     } else if u.oop_is_closure(oop) {
         let mb = MutBox::from_raw(oop);
-        try!(write!(fmt, "<Box {} @{:#x}>", FmtOop(mb.value(), u), oop));
+        write!(fmt, "<Box {} @{:#x}>", FmtOop(mb.value(), u), oop)?;
     } else if u.oop_is_ooparray(oop) {
         let arr = OopArray::from_raw(oop);
-        try!(write!(fmt, "["));
+        write!(fmt, "[")?;
         for (i, oop) in arr.content().iter().enumerate() {
             if i != 0 {
-                try!(write!(fmt, ", "));
+                write!(fmt, ", ")?;
             }
-            try!(fmt_oop(*oop, u, fmt));
+            fmt_oop(*oop, u, fmt)?;
         }
-        try!(write!(fmt, "]"));
+        write!(fmt, "]")?;
     } else if u.oop_is_i64array(oop) {
         let arr = OopArray::from_raw(oop);
-        try!(write!(fmt, "i64["));
+        write!(fmt, "i64[")?;
         for (i, val) in arr.content().iter().enumerate() {
             if i != 0 {
-                try!(write!(fmt, ", "));
+                write!(fmt, ", ")?;
             }
-            try!(write!(fmt, "{}", val));
+            write!(fmt, "{}", val)?;
         }
-        try!(write!(fmt, "]"));
+        write!(fmt, "]")?;
     } else {
-        try!(write!(fmt, "<UnknownOop {:#x}>", oop));
+        write!(fmt, "<UnknownOop {:#x}>", oop)?;
     }
     Ok(())
 }
