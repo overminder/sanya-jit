@@ -1,6 +1,3 @@
-#![feature(intrinsics)]
-#![feature(box_syntax)]
-
 extern crate assembler;
 
 pub mod fibo;

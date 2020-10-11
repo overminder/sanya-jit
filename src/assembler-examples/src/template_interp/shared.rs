@@ -5,9 +5,13 @@ use assembler::x64::utils::objdump_disas_lines;
 use std::fmt::Debug;
 use std::env;
 
+#[cfg(intrinsics)]
 extern "rust-intrinsic" {
     pub fn breakpoint();
 }
+
+#[cfg(not(intrinsics))]
+pub fn breakpoint() { }
 
 pub trait Dispatchable<Opts>: Sized {
     fn build_interp_entry(emit: &mut Emit, opts: &Opts);

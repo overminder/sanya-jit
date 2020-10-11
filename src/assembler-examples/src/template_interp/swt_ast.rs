@@ -69,7 +69,7 @@ pub fn trace_to_node(ops: &[*const u8]) -> Stmt {
             Op::Add => {
                 let r = stack.pop().unwrap();
                 let l = stack.pop().unwrap();
-                stack.push(Node::Add(box r, box l));
+                stack.push(Node::Add(Box::new(r), Box::new(l)));
             }
             Op::BranchLt => {
                 let op_ptr = ops[i - 1];
