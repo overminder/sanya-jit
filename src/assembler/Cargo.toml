@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Overmind JIANG <p90eri@gmail.com>"]
 
 [dependencies]
+num = "0.3.0"
 mmap = "0.1.1"
 byteorder = "0.4.2"
 tempdir = "0.3"

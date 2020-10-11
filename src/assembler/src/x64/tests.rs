@@ -7,8 +7,6 @@ use x64::utils::*;
 use mem::JitMem;
 use emit::*;
 
-use test::Bencher;
-
 // Test traits.
 
 // XXX: Consider switching to quickcheck when we have time.
@@ -181,7 +179,7 @@ impl ATTSyntax for Disp {
     fn as_att_syntax(&self) -> String {
         use std::fmt::LowerHex;
         use std::ops::Neg;
-        use std::num::Zero;
+        use num::Zero;
 
         fn format<A>(i: A) -> String
             where A: Neg<Output = A> + LowerHex + PartialOrd + Zero
@@ -923,6 +921,7 @@ fn assert_assembly_matches_disassembly<A: Instr + Enumerate>() {
         i.emit(&mut code_buf);
     }
     let disas_lines = objdump_disas_lines(code_buf.as_ref());
+    assert!(!disas_lines.is_empty());
 
     // line.len() > 20: filter out lines that are too short.
     for (disas_line, instr) in disas_lines.iter().filter(|line| line.len() > 20).zip(instrs) {
@@ -1049,97 +1048,103 @@ fn test_fibo() {
 
 // Benchmarks.
 
-const ALLOC_SIZE: usize = 32000;
+#[cfg(bench)]
+mod bench {
+    use test::Bencher;
 
-#[bench]
-fn bench_emit_add(b: &mut Bencher) {
-    b.iter(|| {
-        let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
-        for _ in 0..(ALLOC_SIZE / 3) {
-            emit.add(R64::r8, R64::r9);
-        }
-        emit
-    });
-}
+    const ALLOC_SIZE: usize = 32000;
 
-#[bench]
-fn bench_emit_ret(b: &mut Bencher) {
-    b.iter(|| {
-        let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
-        for _ in 0..ALLOC_SIZE {
-            emit.ret();
-        }
-        emit
-    });
-}
+    #[bench]
+    fn bench_emit_add(b: &mut Bencher) {
+        b.iter(|| {
+            let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
+            for _ in 0..(ALLOC_SIZE / 3) {
+                emit.add(R64::r8, R64::r9);
+            }
+            emit
+        });
+    }
 
-#[bench]
-fn bench_emit_push(b: &mut Bencher) {
-    b.iter(|| {
-        let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
-        for _ in 0..(ALLOC_SIZE * 2 / 3) {
-            emit.push(R64::r8);
-        }
-        emit
-    });
-}
+    #[bench]
+    fn bench_emit_ret(b: &mut Bencher) {
+        b.iter(|| {
+            let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
+            for _ in 0..ALLOC_SIZE {
+                emit.ret();
+            }
+            emit
+        });
+    }
 
-#[bench]
-fn bench_emit_push_i32(b: &mut Bencher) {
-    b.iter(|| {
-        let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
-        for _ in 0..(ALLOC_SIZE / 5) {
-            emit.push(-1_i32);
-        }
-        emit
-    });
-}
+    #[bench]
+    fn bench_emit_push(b: &mut Bencher) {
+        b.iter(|| {
+            let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
+            for _ in 0..(ALLOC_SIZE * 2 / 3) {
+                emit.push(R64::r8);
+            }
+            emit
+        });
+    }
 
-#[bench]
-fn bench_emit_push_rm64(b: &mut Bencher) {
-    b.iter(|| {
-        let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
-        for _ in 0..(ALLOC_SIZE / 8) {
-            emit.push(&Addr::B(R64::r12));
-            emit.push(&Addr::B(R64::r13));
-        }
-        emit
-    });
-}
+    #[bench]
+    fn bench_emit_push_i32(b: &mut Bencher) {
+        b.iter(|| {
+            let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
+            for _ in 0..(ALLOC_SIZE / 5) {
+                emit.push(-1_i32);
+            }
+            emit
+        });
+    }
 
-#[bench]
-fn bench_emit_fibo(b: &mut Bencher) {
-    let fibo_len = {
-        let mut emit = Emit::new();
-        make_fibo_code(&mut emit);
-        emit.as_ref().len()
-    };
-    b.iter(|| {
-        let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
-        for _ in 0..(ALLOC_SIZE / fibo_len) {
+    #[bench]
+    fn bench_emit_push_rm64(b: &mut Bencher) {
+        b.iter(|| {
+            let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
+            for _ in 0..(ALLOC_SIZE / 8) {
+                emit.push(&Addr::B(R64::r12));
+                emit.push(&Addr::B(R64::r13));
+            }
+            emit
+        });
+    }
+
+    #[bench]
+    fn bench_emit_fibo(b: &mut Bencher) {
+        let fibo_len = {
+            let mut emit = Emit::new();
             make_fibo_code(&mut emit);
-        }
-        emit
-    });
+            emit.as_ref().len()
+        };
+        b.iter(|| {
+            let mut emit = Emit::to_vec(Vec::with_capacity(ALLOC_SIZE));
+            for _ in 0..(ALLOC_SIZE / fibo_len) {
+                make_fibo_code(&mut emit);
+            }
+            emit
+        });
+    }
+
+    #[bench]
+    fn bench_exec_fibo(b: &mut Bencher) {
+        let fibo = {
+            let mut emit = Emit::new();
+            make_fibo_code(&mut emit);
+            JitMem::new(emit.as_ref())
+        };
+        b.iter(|| unsafe { fibo.call_ptr_ptr(30) });
+    }
+
+    #[bench]
+    fn bench_emit_raw_vec(b: &mut Bencher) {
+        b.iter(|| {
+            let mut v = Vec::with_capacity(ALLOC_SIZE);
+            for _ in 0..ALLOC_SIZE {
+                v.push(0xff);
+            }
+            v
+        });
+    }
 }
 
-#[bench]
-fn bench_exec_fibo(b: &mut Bencher) {
-    let fibo = {
-        let mut emit = Emit::new();
-        make_fibo_code(&mut emit);
-        JitMem::new(emit.as_ref())
-    };
-    b.iter(|| unsafe { fibo.call_ptr_ptr(30) });
-}
-
-#[bench]
-fn bench_emit_raw_vec(b: &mut Bencher) {
-    b.iter(|| {
-        let mut v = Vec::with_capacity(ALLOC_SIZE);
-        for _ in 0..ALLOC_SIZE {
-            v.push(0xff);
-        }
-        v
-    });
-}
