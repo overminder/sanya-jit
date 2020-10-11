@@ -411,9 +411,9 @@ pub fn new_call(func: RawNode, args: NodeList, is_tail: bool) -> RawNode {
 
 pub fn new_if(cond: RawNode, on_true: RawNode, on_false: RawNode) -> RawNode {
     NIf {
-        cond: box cond,
-        on_true: box on_true,
-        on_false: box on_false,
+        cond: Box::new(cond),
+        on_true: Box::new(on_true),
+        on_false: Box::new(on_false),
     }
 }
 

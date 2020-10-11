@@ -86,11 +86,12 @@ fn compile_function(emit: &mut Emit,
     emit_nop_until_aligned(emit, 0x10);
 
     // Make space for infotable.
-    let info = InfoTable::<Closure>::new(scdefn.frame_descr().upval_refs().len() as u16,
-                                         0,
-                                         scdefn.arity() as u16,
-                                         OopKind::Callable,
-                                         &scdefn.name().to_string());
+    let info = InfoTable::<Closure>::new(
+        scdefn.frame_descr().upval_refs().len() as u16,
+        0,
+        scdefn.arity() as u16,
+        OopKind::Callable,
+        &scdefn.name().to_string());
     unsafe {
         emit.alloc(info);
     }
@@ -536,8 +537,8 @@ impl<'a> NodeCompiler<'a> {
             &NRecBindLocal(ref bs, ref n) => {
                 let mut map0 = stackmap;
                 let alloc_sizes = try!(sequence_v(bs.iter()
-                                                    .map(|&(_, ref n)| self.sizeof_alloc(n))
-                                                    .collect()));
+                    .map(|&(_, ref n)| self.sizeof_alloc(n))
+                    .collect()));
                 let total_alloc_size: usize = alloc_sizes.iter().sum();
                 // 1. Alloc all oops at once.
                 self.emit_allocation(map0, total_alloc_size as i32, &[]);

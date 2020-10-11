@@ -1,10 +1,3 @@
-#![feature(convert)]
-#![feature(slice_patterns)]
-#![feature(box_syntax)]
-#![feature(hashmap_hasher)]
-#![feature(drain)]
-#![feature(iter_arith)]
-
 extern crate assembler;
 extern crate byteorder;
 #[macro_use]

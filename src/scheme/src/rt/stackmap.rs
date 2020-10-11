@@ -1,10 +1,9 @@
 use super::oop::Oop;
 
-use fnv::FnvHasher;
+use fnv::{FnvHasher, FnvBuildHasher};
 use std::ptr;
 use std::mem::transmute;
 use std::collections::HashMap;
-use std::collections::hash_state::DefaultState;
 
 /// Frame Layout:
 ///
@@ -47,7 +46,7 @@ unsafe fn read_word(ptr: usize, offset: isize) -> usize {
 //
 // Still, the impact on the performance is quite minor. It seems that using a
 // BTreeMap could sometimes be faster than using a HashMap<FnvHasher>...
-type PcToStackMap = HashMap<usize, StackMap, DefaultState<FnvHasher>>;
+type PcToStackMap = HashMap<usize, StackMap, FnvBuildHasher>;
 
 // (return address relative to the closure entry, StackMap)
 pub type OopStackMapOffsets = HashMap<usize, StackMap>;
