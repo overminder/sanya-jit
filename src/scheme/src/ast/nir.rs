@@ -164,21 +164,15 @@ impl FrameDescrChain {
         self.fd.create_local_slot(name)
     }
 
-    // Oops, borrowck bug (rust-lang/rfcs#811)...
-    // Fortunately Edward has a solution here:
-    // http://blog.ezyang.com/2013/12/two-bugs-in-the-borrow-checker-every-rust-developer-should-know-about/
-    pub fn lookup_slot(&mut self, name: &Id) -> Option<&Slot> {
-        if let x @ Some(_) = unsafe { &mut *(self as *mut Self) }.fd.lookup_slot(name) {
-            return x;
+    pub fn lookup_slot(&mut self, name: &Id) -> Option<Slot> {
+        if let x @ Some(_) = self.fd.lookup_slot(name) {
+            return x.cloned();
         }
 
-        match self.outer() {
-            Some(outer) => {
-                if let Some(outer_slot) = outer.lookup_slot(name) {
-                    return Some(self.fd.create_upval_slot(name.to_owned(), outer_slot.to_owned()));
-                }
+        if let Some(outer) = self.outer() {
+            if let Some(outer_slot) = outer.lookup_slot(name) {
+                return Some(self.fd.create_upval_slot(name.to_owned(), outer_slot.to_owned())).cloned();
             }
-            _ => (),
         }
 
         None

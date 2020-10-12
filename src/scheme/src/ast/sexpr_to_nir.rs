@@ -276,7 +276,7 @@ impl Context {
             }
             &Sym(ref name) => {
                 let name = Id::named(name);
-                let slot = fdc.lookup_slot(&name).cloned().unwrap_or_else(|| Slot::Global(name));
+                let slot = fdc.lookup_slot(&name).unwrap_or_else(|| Slot::Global(name));
                 NReadSlot(slot)
             }
             &Int(..) | &Bool(..) => NLit(LitAny(e.to_owned())),
