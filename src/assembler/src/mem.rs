@@ -10,6 +10,8 @@ pub struct JitMem {
 
 impl JitMem {
     pub fn new(bs: &[u8]) -> Self {
+        // TODO: Port this to Apple Silicon and respect W^X
+        // See: https://developer.apple.com/documentation/apple-silicon/porting-just-in-time-compilers-to-apple-silicon
         let inner = MemoryMap::new(bs.len(), &[MapReadable, MapWritable, MapExecutable]).unwrap();
         let mut thiz = JitMem { inner: inner };
 
