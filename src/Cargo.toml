@@ -1,0 +1,10 @@
+[workspace]
+
+edition = "2021"
+
+members = [
+    "assembler",
+    "assembler-examples",
+    "scheme",
+]
+

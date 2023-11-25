@@ -14,8 +14,14 @@ fn objdump_path() -> &'static str {
     if cfg!(target_os = "linux") {
         "objdump"
     } else if cfg!(target_os = "macos") {
-        // E.g. installed by brew
-        "/usr/local/opt/binutils/bin/gobjdump"
+        // brew installs objdump to slightly different places on m1
+        if cfg!(target_arch = "x86_64") {
+            "/usr/local/opt/binutils/bin/gobjdump"
+        } else if cfg!(target_arch = "aarch64") {
+            "/opt/homebrew/opt/binutils/bin/objdump"
+        } else {
+            panic!("Unsupported macos arch");
+        }
     } else {
         panic!("Should never happen");
     }

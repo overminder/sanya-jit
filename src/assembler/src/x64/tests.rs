@@ -264,11 +264,12 @@ impl ATTSyntax for Push {
         let rand = match self {
             &Push::R64(r) => r.as_att_syntax(),
             &Push::I32(i) => {
-                rator = "pushq";
+                // binutils' objdump seems to just use push as of 2023
+                // rator = "pushq";
                 i.as_att_syntax()
             }
             &Push::M(ref m) => {
-                rator = "pushq";
+                // rator = "pushq";
                 m.as_att_syntax()
             }
         };
@@ -328,7 +329,7 @@ impl ATTSyntax for Pop {
         let rand = match self {
             &Pop::R64(r) => r.as_att_syntax(),
             &Pop::M(ref m) => {
-                rator = "popq";
+                // rator = "popq";
                 m.as_att_syntax()
             }
         };
@@ -762,19 +763,19 @@ impl ATTSyntax for Branch {
 
         match self {
             &JmpR64(r) => {
-                rator = "jmpq";
+                rator = "jmp";
                 rand = r.as_att_syntax();
             }
             &CallR64(r) => {
-                rator = "callq";
+                rator = "call";
                 rand = r.as_att_syntax();
             }
             &JmpM(ref m) => {
-                rator = "jmpq";
+                rator = "jmp";
                 rand = m.as_att_syntax();
             }
             &CallM(ref m) => {
-                rator = "callq";
+                rator = "call";
                 rand = m.as_att_syntax();
             }
         }
@@ -954,10 +955,13 @@ fn test_mov_matches_disassembly() {
 #[test]
 fn test_assembly_matches_disassembly() {
     assert_assembly_matches_disassembly::<Cmovcc>();
+    // objdump says push, though we use pushq
     assert_assembly_matches_disassembly::<Push>();
+    // objdump says pop, though we use popq
     assert_assembly_matches_disassembly::<Pop>();
     assert_assembly_matches_disassembly::<Arith>();
 
+    // objdump says jmp, though we use jmpq
     assert_assembly_matches_disassembly::<Branch>();
     assert_assembly_matches_disassembly::<Ret>();
     assert_assembly_matches_disassembly::<Jcc>();
