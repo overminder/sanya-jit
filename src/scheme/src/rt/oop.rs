@@ -13,6 +13,7 @@ use std::mem::{size_of, transmute, replace};
 use std::fmt::{self, Formatter, Debug};
 use std::cell::UnsafeCell;
 
+// Pointer to a heap object
 pub type Oop = usize;
 
 pub const NULL_OOP: Oop = 0;
@@ -81,7 +82,8 @@ impl<A> InfoTable<A> {
     }
 
     pub fn replace(&mut self, o: Self) {
-        replace(self, o);
+        // Dealloc the original self.
+        _ = replace(self, o);
     }
 
     pub fn new(ptr_payloads: u16,
@@ -201,7 +203,7 @@ pub enum GcRef {
 pub struct Closure {
     // *info points directly to the entry field in the InfoTable.
     // See Haskell's `tables-next-to-code` trick.
-    info: *const (),
+    info: UnsafeCell<usize>,
     payloads: [Oop; 0],
 }
 
@@ -219,7 +221,7 @@ impl Closure {
     }
 
     pub unsafe fn entry_word(&self) -> &mut usize {
-        &mut *(&self.info as *const _ as *mut _)
+        &mut *self.info.get()
     }
 
     pub unsafe fn payload_start(&self) -> usize {
@@ -362,11 +364,12 @@ pub struct I64Array {
 impl IsArray<i64> for I64Array {}
 
 // Doubly-linked list of oops. Used to manage root of stacks.
-
+// A denotes the concrete value type known at construction time, while the underlying ptr
+// is always an oop.
 pub struct RawHandle<A> {
-    oop: Oop,
-    prev: *mut OopHandle,
-    next: *mut OopHandle,
+    oop: UnsafeCell<Oop>,
+    prev: UnsafeCell<*const OopHandle>,
+    next: UnsafeCell<*const OopHandle>,
     phantom_data: PhantomData<A>,
 }
 
@@ -402,13 +405,13 @@ impl IsOop for I64Array {}
 impl HandleBlock {
     pub fn new() -> Box<HandleBlock> {
         let mut thiz = Box::new(HandleBlock(RawHandle {
-            oop: NULL_OOP,
-            prev: ptr::null_mut(),
-            next: ptr::null_mut(),
+            oop: UnsafeCell::new(NULL_OOP),
+            prev: UnsafeCell::new(ptr::null_mut()),
+            next: UnsafeCell::new(ptr::null_mut()),
             phantom_data: PhantomData,
         }));
-        (*thiz).0.prev = (*thiz).0.as_ptr();
-        (*thiz).0.next = (*thiz).0.as_ptr();
+        *thiz.0.next.get_mut() = &thiz.0 as *const _;
+        *thiz.0.prev.get_mut() = &thiz.0 as *const _;
         thiz
     }
 
@@ -435,11 +438,11 @@ impl HandleBlock {
 
 impl<A> RawHandle<A> {
     pub unsafe fn oop(&self) -> &mut Oop {
-        &mut *(&self.oop as *const _ as *mut _)
+        &mut *self.oop.get()
     }
 
     unsafe fn same_ptr(&self, rhs: &OopHandle) -> bool {
-        self.as_ptr() == rhs.as_ptr()
+        self.upcast() as *const OopHandle == rhs as *const OopHandle
     }
 
     pub unsafe fn foreach_oop<F: FnMut(&mut Oop)>(&self, mut f: F) {
@@ -455,35 +458,34 @@ impl<A> RawHandle<A> {
     }
 
     unsafe fn next<'a, 'b>(&'a self) -> &'b mut OopHandle {
-        &mut *self.next
+        let ptr = *self.next.get();
+        &mut *UnsafeCell::raw_get(ptr as *const UnsafeCell<OopHandle>)
     }
 
     #[allow(unused)]
-    unsafe fn set_next(&self, next: *mut OopHandle) {
-        (&mut *(self as *const _ as *mut Self)).next = next;
+    unsafe fn set_next(&self, next: *const OopHandle) {
+        *self.next.get() = next
     }
 
     unsafe fn prev(&self) -> &mut OopHandle {
-        &mut *self.prev
+        let ptr = *self.prev.get();
+        &mut *UnsafeCell::raw_get(ptr as *const UnsafeCell<OopHandle>)
     }
 
-    unsafe fn set_prev(&self, prev: *mut OopHandle) {
-        (&mut *(self as *const _ as *mut Self)).prev = prev;
-    }
-
-    pub fn as_ptr(&self) -> *mut OopHandle {
-        self as *const _ as *const _ as *mut _
+    unsafe fn set_prev(&self, prev: *const OopHandle) {
+        *self.prev.get() = prev
     }
 
     unsafe fn new(oop: *mut A, head: &OopHandle) -> Box<Self> {
         let thiz = Box::new(RawHandle {
-            oop: oop as Oop,
-            prev: head.prev,
-            next: head.as_ptr(),
-            phantom_data: PhantomData,
+            oop: UnsafeCell::new(oop as Oop),
+            prev: UnsafeCell::new(*head.prev.get()),
+            next: UnsafeCell::new(head as *const _),
+            phantom_data: PhantomData::<A>,
         });
-        head.prev().next = RawHandle::<A>::as_ptr(&*thiz);
-        (*head).set_prev(thiz.as_ptr());
+        let thiz_ptr = thiz.deref() as *const RawHandle<A> as *const OopHandle;
+        head.prev().set_next(thiz_ptr);
+        head.set_prev(thiz_ptr);
         thiz
     }
 
@@ -492,15 +494,19 @@ impl<A> RawHandle<A> {
     }
 
     pub unsafe fn dup(&self) -> Box<Self> {
-        RawHandle::<A>::new(*self.oop() as *mut _, &*self.as_ptr())
+        RawHandle::<A>::new(*self.oop() as *mut _, self.upcast())
+    }
+
+    pub unsafe fn upcast(&self) -> &OopHandle {
+        &*(self as *const RawHandle<A> as *const OopHandle)
     }
 }
 
 impl<A> Drop for RawHandle<A> {
     fn drop(&mut self) {
         unsafe {
-            self.next().prev = self.prev().as_ptr();
-            self.prev().next = self.next().as_ptr();
+            self.next().set_prev(self.prev() as *const _);
+            self.prev().set_next(self.next() as *const _);
         }
     }
 }
@@ -508,13 +514,19 @@ impl<A> Drop for RawHandle<A> {
 impl<A> Deref for RawHandle<A> {
     type Target = A;
     fn deref(&self) -> &A {
-        unsafe { &*(self.oop as *const A) }
+        unsafe {
+            let oop = *self.oop.get() as *const UnsafeCell<A>;
+            &*(*oop).get()
+        }
     }
 }
 
 impl<A> DerefMut for RawHandle<A> {
     fn deref_mut(&mut self) -> &mut A {
-        unsafe { &mut *(self.oop as *mut A) }
+        unsafe {
+            let oop = *self.oop.get() as *const UnsafeCell<A>;
+            &mut *(*oop).get()
+        }
     }
 }
 
@@ -533,8 +545,10 @@ mod tests {
                 let foo1 = block.new_ref_handle(&oop);
                 let _foo2 = block.new_ref_handle(&oop);
                 let _foo3 = block.new_ref_handle(&oop);
+                let foo1_d = foo1.deref();
+                let foo1_dd = foo1_d.deref();
                 assert_eq!(&oop as *const _ as Oop, *foo1.oop());
-                assert_eq!(oop.value, foo1.value);
+                assert_eq!(oop.value, foo1.deref().deref().value);
                 assert_eq!(3, block.len());
             }
             assert_eq!(0, block.len());
